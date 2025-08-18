@@ -444,9 +444,9 @@ function ExpenseApp({ user, onSignOut }) {
             <p className="text-sm text-gray-500">
               Welcome back, {user.email}!
               {spouseConnection && (
-                <span className="ml-2 text-red-500">
+                <p className="ml-2 text-red-500">
                   💕 Connected to {spouseConnection.spouse_email}
-                </span>
+                </p>
               )}
             </p>
           </div>
