@@ -23,6 +23,9 @@ import {
   Trash2,
   Pencil,
   Lock,
+  Wallet,
+  Banknote,
+  TrendingUp,
 } from "lucide-react";
 
 // --- Supabase client (put your keys in .env as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY) ---
@@ -32,7 +35,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- Helpers & Constants ---
 const ACCOUNTS = ["gcash", "debit card", "cash", "credit card"];
-const CATEGORIES = [
+const EXPENSE_CATEGORIES = [
   "food",
   "transpo",
   "grocery",
@@ -43,9 +46,17 @@ const CATEGORIES = [
   "entertainment",
   "other",
 ];
+const INCOME_CATEGORIES = [
+  "salary",
+  "bonus",
+  "freelance",
+  "investment",
+  "gift",
+  "other",
+];
 
 // A map for category icons for better visual distinction
-const categoryIcons = {
+const expenseIcons = {
   food: <Utensils className="size-5" />,
   transpo: <Car className="size-5" />,
   grocery: <ShoppingCart className="size-5" />,
@@ -57,18 +68,39 @@ const categoryIcons = {
   other: <MoreHorizontal className="size-5" />,
 };
 
-// --- Helper Functions (no changes here) ---
-function firstDayOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
-function addMonths(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-function toISODate(d) { return d.toISOString(); }
+const incomeIcons = {
+  salary: <Wallet className="size-5" />,
+  bonus: <Banknote className="size-5" />,
+  freelance: <UserPlus className="size-5" />,
+  investment: <TrendingUp className="size-5" />,
+  gift: <Heart className="size-5" />,
+  other: <MoreHorizontal className="size-5" />,
+};
+
+// --- Helper Functions ---
+function firstDayOfMonth(d) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function addMonths(d, n) {
+  return new Date(d.getFullYear(), d.getMonth() + n, 1);
+}
+function toISODate(d) {
+  return d.toISOString();
+}
 function toLocalDatetimeInputValue(date = new Date()) {
   const pad = (n) => String(n).padStart(2, "0");
-  const y = date.getFullYear(); const m = pad(date.getMonth() + 1); const d = pad(date.getDate());
-  const hh = pad(date.getHours()); const mm = pad(date.getMinutes());
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
   return `${y}-${m}-${d}T${hh}:${mm}`;
 }
 function phpCurrency(n) {
-  return Number(n || 0).toLocaleString(undefined, { style: "currency", currency: "PHP" });
+  return Number(n || 0).toLocaleString(undefined, {
+    style: "currency",
+    currency: "PHP",
+  });
 }
 
 // --- Auth Component ---
@@ -85,12 +117,12 @@ function AuthComponent() {
     setError(null);
 
     try {
-      const { error } = isSignUp 
+      const { error } = isSignUp
         ? await supabase.auth.signUp({ email, password })
         : await supabase.auth.signInWithPassword({ email, password });
-      
+
       if (error) throw error;
-      
+
       if (isSignUp) {
         alert("Check your email for verification link!");
       }
@@ -107,10 +139,12 @@ function AuthComponent() {
         <h1 className="text-2xl font-bold text-center mb-6">
           {isSignUp ? "Sign Up" : "Sign In"} to Expense Tracker
         </h1>
-        
+
         <form onSubmit={handleAuth} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-1">Email</label>
+            <label className="block text-sm font-medium text-gray-600 mb-1">
+              Email
+            </label>
             <input
               type="email"
               value={email}
@@ -120,9 +154,11 @@ function AuthComponent() {
               placeholder="your@email.com"
             />
           </div>
-          
+
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-1">Password</label>
+            <label className="block text-sm font-medium text-gray-600 mb-1">
+              Password
+            </label>
             <input
               type="password"
               value={password}
@@ -145,7 +181,7 @@ function AuthComponent() {
             disabled={loading}
             className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-blue-400 transition-colors"
           >
-            {loading ? "Loading..." : (isSignUp ? "Sign Up" : "Sign In")}
+            {loading ? "Loading..." : isSignUp ? "Sign Up" : "Sign In"}
           </button>
         </form>
 
@@ -185,9 +221,9 @@ function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }
       const { error } = await supabase
         .from("spouse_connections")
         .insert({ user_id: user.id, spouse_email: spouseEmail.trim().toLowerCase() });
-      
+
       if (error) throw error;
-      
+
       onSpouseUpdate();
       setSpouseEmail("");
       onClose();
@@ -203,13 +239,10 @@ function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }
     setError(null);
 
     try {
-      const { error } = await supabase
-        .from("spouse_connections")
-        .delete()
-        .eq("user_id", user.id);
-      
+      const { error } = await supabase.from("spouse_connections").delete().eq("user_id", user.id);
+
       if (error) throw error;
-      
+
       onSpouseUpdate();
       onClose();
     } catch (err) {
@@ -227,7 +260,7 @@ function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
           <X className="size-6" />
         </button>
-        
+
         <div className="flex items-center gap-3 mb-4">
           <Heart className="size-6 text-red-500" />
           <h2 className="text-xl font-bold">Spouse Management</h2>
@@ -245,7 +278,7 @@ function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }
                 <p className="text-sm text-green-600 mt-1">✓ Active account found</p>
               )}
             </div>
-            
+
             <button
               onClick={handleRemoveSpouse}
               disabled={loading}
@@ -258,9 +291,7 @@ function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }
         ) : (
           <form onSubmit={handleAddSpouse} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-600 mb-2">
-                Spouse Email Address
-              </label>
+              <label className="block text-sm font-medium text-gray-600 mb-2">Spouse Email Address</label>
               <input
                 type="email"
                 value={spouseEmail}
@@ -270,15 +301,11 @@ function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Your expenses will be combined automatically. No confirmation needed.
+                Your expenses & income will be combined automatically. No confirmation needed.
               </p>
             </div>
 
-            {error && (
-              <div className="text-red-600 text-sm bg-red-50 p-3 rounded-lg">
-                {error}
-              </div>
-            )}
+            {error && <div className="text-red-600 text-sm bg-red-50 p-3 rounded-lg">{error}</div>}
 
             <button
               type="submit"
@@ -308,7 +335,9 @@ export default function App() {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
 
@@ -331,23 +360,52 @@ export default function App() {
     return <AuthComponent />;
   }
 
-  return <ExpenseApp user={user} onSignOut={handleSignOut} />;
+  return <MoneyApp user={user} onSignOut={handleSignOut} />;
 }
 
-// --- Expense App Component ---
-function ExpenseApp({ user, onSignOut }) {
+// --- Expense & Income App Component ---
+function MoneyApp({ user, onSignOut }) {
+  const [activeTab, setActiveTab] = useState("expenses"); // "expenses" | "income"
   const [viewMonth, setViewMonth] = useState(firstDayOfMonth(new Date()));
-  const [expenses, setExpenses] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isSpouseModalOpen, setIsSpouseModalOpen] = useState(false);
-  const [spouseConnection, setSpouseConnection] = useState(null);
-  const [editing, setEditing] = useState(null);
 
-  const nextMonthDisabled = useMemo(() => addMonths(viewMonth, 1) > firstDayOfMonth(new Date()), [viewMonth]);
-  const monthLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(viewMonth), [viewMonth]);
-  const total = useMemo(() => expenses.reduce((sum, e) => sum + parseFloat(String(e.amount || 0)), 0), [expenses]);
+  // Spouse modal
+  const [isSpouseModalOpen, setIsSpouseModalOpen] = useState(false);
+
+  // Expenses state
+  const [expenses, setExpenses] = useState([]);
+  const [loadingExpenses, setLoadingExpenses] = useState(true);
+  const [errorExpenses, setErrorExpenses] = useState(null);
+  const [isExpenseFormOpen, setIsExpenseFormOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState(null);
+
+  // Income state
+  const [incomes, setIncomes] = useState([]);
+  const [loadingIncome, setLoadingIncome] = useState(true);
+  const [errorIncome, setErrorIncome] = useState(null);
+  const [isIncomeFormOpen, setIsIncomeFormOpen] = useState(false);
+  const [editingIncome, setEditingIncome] = useState(null);
+
+  // Spouse
+  const [spouseConnection, setSpouseConnection] = useState(null);
+
+  const nextMonthDisabled = useMemo(
+    () => addMonths(viewMonth, 1) > firstDayOfMonth(new Date()),
+    [viewMonth]
+  );
+  const monthLabel = useMemo(
+    () => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(viewMonth),
+    [viewMonth]
+  );
+
+  const totalExpenses = useMemo(
+    () => expenses.reduce((sum, e) => sum + parseFloat(String(e.amount || 0)), 0),
+    [expenses]
+  );
+  const totalIncome = useMemo(
+    () => incomes.reduce((sum, i) => sum + parseFloat(String(i.amount || 0)), 0),
+    [incomes]
+  );
+  const net = useMemo(() => totalIncome - totalExpenses, [totalIncome, totalExpenses]);
 
   // Fetch spouse connection
   const fetchSpouseConnection = async () => {
@@ -357,8 +415,8 @@ function ExpenseApp({ user, onSignOut }) {
         .select("*")
         .eq("user_id", user.id)
         .single();
-      
-      if (error && error.code !== 'PGRST116') throw error;
+
+      if (error && error.code !== "PGRST116") throw error; // not found is ok
       setSpouseConnection(data);
     } catch (err) {
       console.error("Error fetching spouse connection:", err);
@@ -369,15 +427,15 @@ function ExpenseApp({ user, onSignOut }) {
     fetchSpouseConnection();
   }, [user.id]);
 
+  // Fetch expenses for month (+spouse)
   useEffect(() => {
     const fetchExpenses = async () => {
-      setLoading(true);
-      setError(null);
+      setLoadingExpenses(true);
+      setErrorExpenses(null);
       try {
         const start = firstDayOfMonth(viewMonth);
         const end = addMonths(start, 1);
-        
-        // Fetch user's own expenses
+
         const { data: userExpenses, error: userError } = await supabase
           .from("expenses")
           .select("*")
@@ -385,12 +443,11 @@ function ExpenseApp({ user, onSignOut }) {
           .gte("created_at", toISODate(start))
           .lt("created_at", toISODate(end))
           .order("created_at", { ascending: false });
-        
+
         if (userError) throw userError;
-        
+
         let allExpenses = userExpenses || [];
-        
-        // If spouse is connected, fetch their expenses too
+
         if (spouseConnection?.spouse_user_id) {
           const { data: spouseExpenses, error: spouseError } = await supabase
             .from("expenses")
@@ -399,56 +456,94 @@ function ExpenseApp({ user, onSignOut }) {
             .gte("created_at", toISODate(start))
             .lt("created_at", toISODate(end))
             .order("created_at", { ascending: false });
-          
           if (spouseError) throw spouseError;
-          
-          // Mark spouse expenses and combine
-          const markedSpouseExpenses = (spouseExpenses || []).map(expense => ({
-            ...expense,
-            is_spouse_expense: true,
-            spouse_email: spouseConnection.spouse_email
+          const marked = (spouseExpenses || []).map((row) => ({
+            ...row,
+            is_spouse: true,
+            spouse_email: spouseConnection.spouse_email,
           }));
-          
-          allExpenses = [...allExpenses, ...markedSpouseExpenses]
-            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+          allExpenses = [...allExpenses, ...marked].sort(
+            (a, b) => new Date(b.created_at) - new Date(a.created_at)
+          );
         }
-        
+
         setExpenses(allExpenses);
       } catch (err) {
-        setError(err.message || "Failed to load expenses.");
+        setErrorExpenses(err.message || "Failed to load expenses.");
       } finally {
-        setLoading(false);
+        setLoadingExpenses(false);
       }
     };
-    
     fetchExpenses();
   }, [viewMonth, user.id, spouseConnection]);
 
-  const handleAddExpense = (newExpense) => {
-    const rowDate = new Date(newExpense.created_at);
+  // Fetch income for month (+spouse)
+  useEffect(() => {
+    const fetchIncome = async () => {
+      setLoadingIncome(true);
+      setErrorIncome(null);
+      try {
+        const start = firstDayOfMonth(viewMonth);
+        const end = addMonths(start, 1);
+
+        const { data: userIncome, error: userError } = await supabase
+          .from("incomes")
+          .select("*")
+          .eq("user_id", user.id)
+          .gte("created_at", toISODate(start))
+          .lt("created_at", toISODate(end))
+          .order("created_at", { ascending: false });
+        if (userError) throw userError;
+
+        let allIncome = userIncome || [];
+
+        if (spouseConnection?.spouse_user_id) {
+          const { data: spouseIncome, error: spouseError } = await supabase
+            .from("incomes")
+            .select("*")
+            .eq("user_id", spouseConnection.spouse_user_id)
+            .gte("created_at", toISODate(start))
+            .lt("created_at", toISODate(end))
+            .order("created_at", { ascending: false });
+          if (spouseError) throw spouseError;
+          const marked = (spouseIncome || []).map((row) => ({
+            ...row,
+            is_spouse: true,
+            spouse_email: spouseConnection.spouse_email,
+          }));
+          allIncome = [...allIncome, ...marked].sort(
+            (a, b) => new Date(b.created_at) - new Date(a.created_at)
+          );
+        }
+
+        setIncomes(allIncome);
+      } catch (err) {
+        setErrorIncome(err.message || "Failed to load income.");
+      } finally {
+        setLoadingIncome(false);
+      }
+    };
+    fetchIncome();
+  }, [viewMonth, user.id, spouseConnection]);
+
+  // Handlers: expenses
+  const handleExpenseAdded = (newRow) => {
+    const rowDate = new Date(newRow.created_at);
     const inMonth = rowDate >= firstDayOfMonth(viewMonth) && rowDate < addMonths(viewMonth, 1);
     if (inMonth) {
-      setExpenses((old) => [newExpense, ...old].sort((a,b) => new Date(b.created_at) - new Date(a.created_at)));
+      setExpenses((old) => [newRow, ...old].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
     }
-    setIsFormOpen(false);
+    setIsExpenseFormOpen(false);
   };
-
-  const handleEditOpen = (expense) => setEditing(expense);
-  const handleEditClose = () => setEditing(null);
-
   const handleExpenseUpdated = (updated) => {
-    // If date moved out of the visible month, remove it; else replace it.
     const rowDate = new Date(updated.created_at);
     const inMonth = rowDate >= firstDayOfMonth(viewMonth) && rowDate < addMonths(viewMonth, 1);
     setExpenses((old) => {
-      const without = old.filter(e => e.id !== updated.id);
-      return inMonth
-        ? [updated, ...without].sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
-        : without;
+      const without = old.filter((e) => e.id !== updated.id);
+      return inMonth ? [updated, ...without].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : without;
     });
-    setEditing(null);
+    setEditingExpense(null);
   };
-
   const handleDeleteExpense = async (id) => {
     if (!confirm("Delete this expense?")) return;
     const { error } = await supabase.from("expenses").delete().eq("id", id);
@@ -456,11 +551,35 @@ function ExpenseApp({ user, onSignOut }) {
       alert(error.message || "Failed to delete expense.");
       return;
     }
-    setExpenses((old) => old.filter(e => e.id !== id));
+    setExpenses((old) => old.filter((e) => e.id !== id));
   };
 
-  const handleSpouseUpdate = () => {
-    fetchSpouseConnection();
+  // Handlers: income
+  const handleIncomeAdded = (newRow) => {
+    const rowDate = new Date(newRow.created_at);
+    const inMonth = rowDate >= firstDayOfMonth(viewMonth) && rowDate < addMonths(viewMonth, 1);
+    if (inMonth) {
+      setIncomes((old) => [newRow, ...old].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+    }
+    setIsIncomeFormOpen(false);
+  };
+  const handleIncomeUpdated = (updated) => {
+    const rowDate = new Date(updated.created_at);
+    const inMonth = rowDate >= firstDayOfMonth(viewMonth) && rowDate < addMonths(viewMonth, 1);
+    setIncomes((old) => {
+      const without = old.filter((e) => e.id !== updated.id);
+      return inMonth ? [updated, ...without].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : without;
+    });
+    setEditingIncome(null);
+  };
+  const handleDeleteIncome = async (id) => {
+    if (!confirm("Delete this income?")) return;
+    const { error } = await supabase.from("incomes").delete().eq("id", id);
+    if (error) {
+      alert(error.message || "Failed to delete income.");
+      return;
+    }
+    setIncomes((old) => old.filter((e) => e.id !== id));
   };
 
   const isCombined = Boolean(spouseConnection?.spouse_user_id);
@@ -471,13 +590,11 @@ function ExpenseApp({ user, onSignOut }) {
         {/* --- Header --- */}
         <header className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Expense Tracker</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Money Tracker</h1>
             <div className="text-sm text-gray-500">
               <div>Welcome back, {user.email}!</div>
               {spouseConnection && (
-                <div className="mt-1 text-red-500">
-                  💕 Connected to {spouseConnection.spouse_email}
-                </div>
+                <div className="mt-1 text-red-500">💕 Connected to {spouseConnection.spouse_email}</div>
               )}
             </div>
           </div>
@@ -496,49 +613,84 @@ function ExpenseApp({ user, onSignOut }) {
                 <Heart className="size-5" />
                 <span className="hidden sm:inline">Spouse</span>
               </button>
-              <button
-                onClick={() => setIsFormOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-              >
-                <PlusCircle className="size-5" />
-                <span className="hidden sm:inline">Add Expense</span>
-              </button>
-              <button
-                onClick={onSignOut}
-                className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors"
-                title="Sign Out"
-              >
+              {activeTab === "expenses" ? (
+                <button
+                  onClick={() => setIsExpenseFormOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                >
+                  <PlusCircle className="size-5" />
+                  <span className="hidden sm:inline">Add Expense</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => setIsIncomeFormOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white font-semibold shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+                >
+                  <PlusCircle className="size-5" />
+                  <span className="hidden sm:inline">Add Income</span>
+                </button>
+              )}
+              <button onClick={onSignOut} className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors" title="Sign Out">
                 <LogOut className="size-5" />
               </button>
             </div>
           </div>
         </header>
 
+        {/* Tabs */}
+        <div className="mb-4 inline-flex rounded-xl bg-white p-1 shadow-sm">
+          <TabButton label="Expenses" active={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} />
+          <TabButton label="Income" active={activeTab === "income"} onClick={() => setActiveTab("income")} />
+        </div>
+
+        {/* --- Summary --- */}
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="p-4 bg-white rounded-2xl shadow-sm">
+            <div className="text-sm text-gray-500">{isCombined ? "Combined" : "Your"} expenses — {monthLabel}</div>
+            <div className="text-2xl font-bold text-gray-900">{phpCurrency(totalExpenses)}</div>
+          </div>
+          <div className="p-4 bg-white rounded-2xl shadow-sm">
+            <div className="text-sm text-gray-500">{isCombined ? "Combined" : "Your"} income — {monthLabel}</div>
+            <div className="text-2xl font-bold text-gray-900">{phpCurrency(totalIncome)}</div>
+          </div>
+          <div className="p-4 bg-white rounded-2xl shadow-sm">
+            <div className="text-sm text-gray-500">Net (income − expenses)</div>
+            <div className={`text-2xl font-bold ${net >= 0 ? "text-emerald-600" : "text-red-600"}`}>{phpCurrency(net)}</div>
+          </div>
+        </div>
+
         {/* --- Main Content --- */}
         <main>
-          <div className="mb-6 p-4 bg-white rounded-2xl shadow-sm flex items-center justify-between">
-            <div className="text-sm text-gray-500">
-              {Boolean(spouseConnection?.spouse_user_id) ? "Combined total" : "Total"} for {monthLabel}
-            </div>
-            <div className="text-2xl font-bold text-gray-900">{phpCurrency(total)}</div>
-          </div>
-
-          {/* Keep only ONE list */}
-          <ExpenseList
-            expenses={expenses}
-            loading={loading}
-            monthLabel={monthLabel}
-            userEmail={user.email}
-            currentUserId={user.id}
-            onEdit={handleEditOpen}
-            onDelete={handleDeleteExpense}
-          />
+          {activeTab === "expenses" ? (
+            <ExpenseList
+              expenses={expenses}
+              loading={loadingExpenses}
+              error={errorExpenses}
+              monthLabel={monthLabel}
+              currentUserId={user.id}
+              onEdit={setEditingExpense}
+              onDelete={handleDeleteExpense}
+            />
+          ) : (
+            <IncomeList
+              incomes={incomes}
+              loading={loadingIncome}
+              error={errorIncome}
+              monthLabel={monthLabel}
+              currentUserId={user.id}
+              onEdit={setEditingIncome}
+              onDelete={handleDeleteIncome}
+            />
+          )}
         </main>
 
-        <ExpenseFormModal
-          isOpen={isFormOpen}
-          onClose={() => setIsFormOpen(false)}
-          onAddExpense={handleAddExpense}
+        {/* Modals */}
+        <ExpenseFormModal isOpen={isExpenseFormOpen} onClose={() => setIsExpenseFormOpen(false)} onAdd={handleExpenseAdded} />
+        <IncomeFormModal
+          isOpen={isIncomeFormOpen}
+          onClose={() => setIsIncomeFormOpen(false)}
+          onAdd={handleIncomeAdded}
+          userId={user.id}
         />
 
         <SpouseModal
@@ -546,45 +698,64 @@ function ExpenseApp({ user, onSignOut }) {
           onClose={() => setIsSpouseModalOpen(false)}
           user={user}
           spouseConnection={spouseConnection}
-          onSpouseUpdate={handleSpouseUpdate}
+          onSpouseUpdate={fetchSpouseConnection}
         />
 
-        {/* Single footer */}
-        <footer className="py-8 text-center text-xs text-gray-400">
-          Built with React + Supabase
-        </footer>
+        {editingExpense && (
+          <EditExpenseModal isOpen={true} expense={editingExpense} onClose={() => setEditingExpense(null)} onSave={handleExpenseUpdated} />)
+        }
+        {editingIncome && (
+          <EditIncomeModal isOpen={true} income={editingIncome} onClose={() => setEditingIncome(null)} onSave={handleIncomeUpdated} />)
+        }
 
-        {editing && (
-          <EditExpenseModal
-            isOpen={true}
-            expense={editing}
-            onClose={handleEditClose}
-            onSave={handleExpenseUpdated}
-          />
-        )}
+        {/* Footer */}
+        <footer className="py-8 text-center text-xs text-gray-400">Built with React + Supabase</footer>
       </div>
     </div>
   );
-
 }
 
-// --- Sub-components for better organization ---
+function TabButton({ label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+        active ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
 
 function MonthNavigator({ viewMonth, setViewMonth, nextMonthDisabled, monthLabel }) {
   const gotoPrevMonth = () => setViewMonth((m) => addMonths(m, -1));
   const gotoNextMonth = () => !nextMonthDisabled && setViewMonth((m) => addMonths(m, 1));
   const gotoCurrentMonth = () => setViewMonth(firstDayOfMonth(new Date()));
-  
+
   return (
     <div className="flex items-center gap-2">
-      <button onClick={gotoPrevMonth} className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors"><ChevronLeft className="size-5" /></button>
-      <button onClick={gotoCurrentMonth} className="px-3 py-2 text-sm font-semibold rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors">{monthLabel}</button>
-      <button onClick={gotoNextMonth} disabled={nextMonthDisabled} className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><ChevronRight className="size-5" /></button>
+      <button onClick={gotoPrevMonth} className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors">
+        <ChevronLeft className="size-5" />
+      </button>
+      <button onClick={gotoCurrentMonth} className="px-3 py-2 text-sm font-semibold rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors">
+        {monthLabel}
+      </button>
+      <button
+        onClick={gotoNextMonth}
+        disabled={nextMonthDisabled}
+        className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <ChevronRight className="size-5" />
+      </button>
     </div>
   );
 }
 
-function ExpenseList({ expenses, loading, monthLabel, userEmail, currentUserId, onEdit, onDelete }) {
+// =====================
+// Lists & Items
+// =====================
+function ExpenseList({ expenses, loading, error, monthLabel, currentUserId, onEdit, onDelete }) {
   if (loading) {
     return (
       <div className="flex justify-center items-center p-12 bg-white rounded-2xl shadow-sm">
@@ -592,8 +763,10 @@ function ExpenseList({ expenses, loading, monthLabel, userEmail, currentUserId, 
       </div>
     );
   }
-
-  if (expenses.length === 0) {
+  if (error) {
+    return <div className="p-6 bg-white rounded-2xl shadow-sm text-red-600">{error}</div>;
+  }
+  if (!expenses?.length) {
     return (
       <div className="p-12 text-center text-gray-500 bg-white rounded-2xl shadow-sm">
         <p>No expenses for {monthLabel} yet.</p>
@@ -601,63 +774,81 @@ function ExpenseList({ expenses, loading, monthLabel, userEmail, currentUserId, 
       </div>
     );
   }
-
   return (
     <div className="space-y-3">
       {expenses.map((e) => (
-        <ExpenseListItem
-          key={e.id}
-          expense={e}
-          userEmail={userEmail}
-          currentUserId={currentUserId}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
+        <RowCard key={e.id} row={e} currentUserId={currentUserId} icons={expenseIcons} kind="expense" onEdit={() => onEdit(e)} onDelete={() => onDelete(e.id)} />
       ))}
     </div>
   );
 }
 
-function ExpenseListItem({ expense, userEmail, currentUserId, onEdit, onDelete }) {
-  const { id, user_id, amount, account, category, note, created_at, is_spouse_expense, spouse_email } = expense;
+function IncomeList({ incomes, loading, error, monthLabel, currentUserId, onEdit, onDelete }) {
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center p-12 bg-white rounded-2xl shadow-sm">
+        <LoaderCircle className="size-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+  if (error) {
+    return <div className="p-6 bg-white rounded-2xl shadow-sm text-red-600">{error}</div>;
+  }
+  if (!incomes?.length) {
+    return (
+      <div className="p-12 text-center text-gray-500 bg-white rounded-2xl shadow-sm">
+        <p>No income for {monthLabel} yet.</p>
+        <p className="text-sm mt-1">Click "Add Income" to get started!</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {incomes.map((i) => (
+        <RowCard key={i.id} row={i} currentUserId={currentUserId} icons={incomeIcons} kind="income" onEdit={() => onEdit(i)} onDelete={() => onDelete(i.id)} />
+      ))}
+    </div>
+  );
+}
+
+function RowCard({ row, currentUserId, icons, kind, onEdit, onDelete }) {
+  const { id, user_id, amount, account, category, note, created_at, is_spouse, spouse_email } = row;
   const date = new Date(created_at);
   const canManage = user_id === currentUserId;
 
   return (
-    <div className={`bg-white p-4 rounded-2xl shadow-sm flex items-center gap-4 ${is_spouse_expense ? 'border-l-4 border-red-200' : ''}`}>
-      <div className={`p-3 rounded-full ${is_spouse_expense ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
-        {categoryIcons[category] || <MoreHorizontal className="size-5" />}
+    <div className={`bg-white p-4 rounded-2xl shadow-sm flex items-center gap-4 ${is_spouse ? "border-l-4 border-red-200" : ""}`}>
+      <div className={`${is_spouse ? "bg-red-100 text-red-600" : kind === "income" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-600"} p-3 rounded-full`}>
+        {icons[category] || <MoreHorizontal className="size-5" />}
       </div>
       <div className="flex-1">
         <div className="flex items-center gap-2">
           <p className="font-semibold capitalize text-gray-800">{note || category}</p>
-          {is_spouse_expense && (
-            <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">
-              {spouse_email}
-            </span>
+          {is_spouse && (
+            <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">{spouse_email}</span>
           )}
         </div>
         <p className="text-sm text-gray-500">
-          {date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} • <span className="capitalize">{account}</span>
+          {date.toLocaleDateString(undefined, { day: "numeric", month: "short" })} • <span className="capitalize">{account}</span>
         </p>
       </div>
       <div className="text-right">
         <p className="font-bold text-lg text-gray-900">{phpCurrency(parseFloat(String(amount)))}</p>
-        <p className="text-xs text-gray-400">{date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</p>
+        <p className="text-xs text-gray-400">{date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</p>
 
         <div className="flex items-center justify-end gap-2 mt-2">
           <button
-            className={`p-2 rounded-lg ${canManage ? 'bg-white hover:bg-gray-100' : 'bg-gray-50 opacity-60 cursor-not-allowed'} shadow-sm transition-colors`}
-            title={canManage ? 'Edit' : "You can’t edit spouse expenses"}
-            onClick={() => canManage && onEdit(expense)}
+            className={`p-2 rounded-lg ${canManage ? "bg-white hover:bg-gray-100" : "bg-gray-50 opacity-60 cursor-not-allowed"} shadow-sm transition-colors`}
+            title={canManage ? "Edit" : "You can’t edit spouse entries"}
+            onClick={() => canManage && onEdit()}
             disabled={!canManage}
           >
             {canManage ? <Pencil className="size-4" /> : <Lock className="size-4" />}
           </button>
           <button
-            className={`p-2 rounded-lg ${canManage ? 'bg-white hover:bg-gray-100' : 'bg-gray-50 opacity-60 cursor-not-allowed'} shadow-sm transition-colors`}
-            title={canManage ? 'Delete' : "You can’t delete spouse expenses"}
-            onClick={() => canManage && onDelete(id)}
+            className={`p-2 rounded-lg ${canManage ? "bg-white hover:bg-gray-100" : "bg-gray-50 opacity-60 cursor-not-allowed"} shadow-sm transition-colors`}
+            title={canManage ? "Delete" : "You can’t delete spouse entries"}
+            onClick={() => canManage && onDelete()}
             disabled={!canManage}
           >
             <Trash2 className="size-4" />
@@ -668,7 +859,10 @@ function ExpenseListItem({ expense, userEmail, currentUserId, onEdit, onDelete }
   );
 }
 
-function ExpenseFormModal({ isOpen, onClose, onAddExpense }) {
+// =====================
+// Modals
+// =====================
+function ExpenseFormModal({ isOpen, onClose, onAdd }) {
   const [amount, setAmount] = useState("");
   const [account, setAccount] = useState("gcash");
   const [category, setCategory] = useState("food");
@@ -678,10 +872,13 @@ function ExpenseFormModal({ isOpen, onClose, onAddExpense }) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    // Reset form when modal opens
     if (isOpen) {
-      setAmount(""); setAccount("gcash"); setCategory("food");
-      setDt(toLocalDatetimeInputValue()); setNote(""); setError(null);
+      setAmount("");
+      setAccount("gcash");
+      setCategory("food");
+      setDt(toLocalDatetimeInputValue());
+      setNote("");
+      setError(null);
     }
   }, [isOpen]);
 
@@ -696,66 +893,38 @@ function ExpenseFormModal({ isOpen, onClose, onAddExpense }) {
       return;
     }
     try {
-      const payload = { amount: amt, account, category, note: note || null, created_at: new Date(dt).toISOString() };
+      const payload = {
+        amount: amt,
+        account,
+        category,
+        note: note || null,
+        created_at: new Date(dt).toISOString(),
+      };
       const { data, error } = await supabase.from("expenses").insert(payload).select();
       if (error) throw error;
-      onAddExpense(data[0]);
+      onAdd(data[0]);
     } catch (err) {
       setError(err.message || "Failed to add expense.");
     } finally {
       setSubmitting(false);
     }
   }
-  
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-white w-full max-w-md p-6 rounded-2xl shadow-xl relative">
-        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
-          <X className="size-6" />
-        </button>
-        <h2 className="text-xl font-bold mb-4">Add New Expense</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Form Fields */}
-          <label className="block"><span className="text-sm font-medium text-gray-600">Amount</span>
-            <input type="number" step="0.01" min="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" required
-              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50" />
-          </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <label className="block"><span className="text-sm font-medium text-gray-600">Account</span>
-              <select value={account} onChange={(e) => setAccount(e.target.value)}
-                className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50">
-                {ACCOUNTS.map((a) => <option key={a} value={a} className="capitalize">{a}</option>)}
-              </select>
-            </label>
-            <label className="block"><span className="text-sm font-medium text-gray-600">Category</span>
-              <select value={category} onChange={(e) => setCategory(e.target.value)}
-                className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50">
-                {CATEGORIES.map((c) => <option key={c} value={c} className="capitalize">{c}</option>)}
-              </select>
-            </label>
-          </div>
-          <label className="block"><span className="text-sm font-medium text-gray-600">Date & Time</span>
-            <input type="datetime-local" value={dt} onChange={(e) => setDt(e.target.value)}
-              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50" />
-          </label>
-          <label className="block"><span className="text-sm font-medium text-gray-600">Note (Optional)</span>
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g., Lunch with team"
-              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50 min-h-[60px]" />
-          </label>
-          {/* --- Submission Area --- */}
-          <div className="flex items-center justify-between pt-2">
-            <button type="submit" disabled={submitting}
-              className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 transition-colors">
-              {submitting && <LoaderCircle className="size-4 animate-spin mr-2" />}
-              {submitting ? "Adding..." : "Add Expense"}
-            </button>
-            {error && <div className="text-sm text-red-600 text-right">{error}</div>}
-          </div>
-        </form>
-      </div>
-    </div>
+    <ModalShell title="Add New Expense" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <NumberField label="Amount" value={amount} onChange={setAmount} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <SelectField label="Account" value={account} onChange={setAccount} options={ACCOUNTS} />
+          <SelectField label="Category" value={category} onChange={setCategory} options={EXPENSE_CATEGORIES} />
+        </div>
+        <DatetimeField label="Date & Time" value={dt} onChange={setDt} />
+        <TextareaField label="Note (Optional)" value={note} onChange={setNote} placeholder="e.g., Lunch with team" />
+        <SubmitRow submitting={submitting} error={error} submitLabel="Add Expense" />
+      </form>
+    </ModalShell>
   );
 }
 
@@ -797,13 +966,7 @@ function EditExpenseModal({ isOpen, expense, onClose, onSave }) {
         note: note || null,
         created_at: new Date(dt).toISOString(),
       };
-      const { data, error } = await supabase
-        .from("expenses")
-        .update(payload)
-        .eq("id", expense.id)
-        .select()
-        .single();
-
+      const { data, error } = await supabase.from("expenses").update(payload).eq("id", expense.id).select().single();
       if (error) throw error;
       onSave(data);
     } catch (err) {
@@ -816,91 +979,251 @@ function EditExpenseModal({ isOpen, expense, onClose, onSave }) {
   if (!isOpen) return null;
 
   return (
+    <ModalShell title="Edit Expense" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <NumberField label="Amount" value={amount} onChange={setAmount} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <SelectField label="Account" value={account} onChange={setAccount} options={ACCOUNTS} />
+          <SelectField label="Category" value={category} onChange={setCategory} options={EXPENSE_CATEGORIES} />
+        </div>
+        <DatetimeField label="Date & Time" value={dt} onChange={setDt} />
+        <TextareaField label="Note (Optional)" value={note} onChange={setNote} placeholder="e.g., Lunch with team" />
+        <SubmitRow submitting={submitting} error={error} submitLabel="Save Changes" />
+      </form>
+    </ModalShell>
+  );
+}
+
+function IncomeFormModal({ isOpen, onClose, onAdd, userId }) {
+  const [amount, setAmount] = useState("");
+  const [account, setAccount] = useState("gcash");
+  const [category, setCategory] = useState("salary");
+  const [dt, setDt] = useState(toLocalDatetimeInputValue());
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setAmount("");
+      setAccount("gcash");
+      setCategory("salary");
+      setDt(toLocalDatetimeInputValue());
+      setNote("");
+      setError(null);
+    }
+  }, [isOpen]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const amt = parseFloat(amount);
+    if (Number.isNaN(amt) || amt <= 0) {
+      setError("Amount must be a positive number.");
+      setSubmitting(false);
+      return;
+    }
+    try {
+      const payload = {
+        user_id: userId, // ensure RLS passes
+        amount: amt,
+        account,
+        category,
+        note: note || null,
+        created_at: new Date(dt).toISOString(),
+      };
+      const { data, error } = await supabase.from("incomes").insert(payload).select();
+      if (error) throw error;
+      onAdd(data[0]);
+    } catch (err) {
+      setError(err.message || "Failed to add income.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <ModalShell title="Add Income" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <NumberField label="Amount" value={amount} onChange={setAmount} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <SelectField label="Account" value={account} onChange={setAccount} options={ACCOUNTS} />
+          <SelectField label="Category" value={category} onChange={setCategory} options={INCOME_CATEGORIES} />
+        </div>
+        <DatetimeField label="Date & Time" value={dt} onChange={setDt} />
+        <TextareaField label="Note (Optional)" value={note} onChange={setNote} placeholder="e.g., Salary for Aug 15" />
+        <SubmitRow submitting={submitting} error={error} submitLabel="Add Income" buttonClass="bg-green-600 hover:bg-green-700 focus:ring-green-500 disabled:bg-green-400" />
+      </form>
+    </ModalShell>
+  );
+}
+
+function EditIncomeModal({ isOpen, income, onClose, onSave }) {
+  const [amount, setAmount] = useState("");
+  const [account, setAccount] = useState("gcash");
+  const [category, setCategory] = useState("salary");
+  const [dt, setDt] = useState(toLocalDatetimeInputValue());
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && income) {
+      setAmount(String(income.amount ?? ""));
+      setAccount(income.account ?? "gcash");
+      setCategory(income.category ?? "salary");
+      setDt(toLocalDatetimeInputValue(new Date(income.created_at)));
+      setNote(income.note ?? "");
+      setError(null);
+    }
+  }, [isOpen, income]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const amt = parseFloat(amount);
+    if (Number.isNaN(amt) || amt <= 0) {
+      setError("Amount must be a positive number.");
+      setSubmitting(false);
+      return;
+    }
+    try {
+      const payload = {
+        amount: amt,
+        account,
+        category,
+        note: note || null,
+        created_at: new Date(dt).toISOString(),
+      };
+      const { data, error } = await supabase.from("incomes").update(payload).eq("id", income.id).select().single();
+      if (error) throw error;
+      onSave(data);
+    } catch (err) {
+      setError(err.message || "Failed to update income.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <ModalShell title="Edit Income" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <NumberField label="Amount" value={amount} onChange={setAmount} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <SelectField label="Account" value={account} onChange={setAccount} options={ACCOUNTS} />
+          <SelectField label="Category" value={category} onChange={setCategory} options={INCOME_CATEGORIES} />
+        </div>
+        <DatetimeField label="Date & Time" value={dt} onChange={setDt} />
+        <TextareaField label="Note (Optional)" value={note} onChange={setNote} placeholder="e.g., Salary for Aug 15" />
+        <SubmitRow submitting={submitting} error={error} submitLabel="Save Changes" buttonClass="bg-green-600 hover:bg-green-700 focus:ring-green-500 disabled:bg-green-400" />
+      </form>
+    </ModalShell>
+  );
+}
+
+// =====================
+// UI primitives
+// =====================
+function ModalShell({ title, onClose, children }) {
+  return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="bg-white w-full max-w-md p-6 rounded-2xl shadow-xl relative">
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
           <X className="size-6" />
         </button>
-        <h2 className="text-xl font-bold mb-4">Edit Expense</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium text-gray-600">Amount</span>
-            <input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              required
-              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
-            />
-          </label>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <label className="block">
-              <span className="text-sm font-medium text-gray-600">Account</span>
-              <select
-                value={account}
-                onChange={(e) => setAccount(e.target.value)}
-                className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
-              >
-                {ACCOUNTS.map((a) => (
-                  <option key={a} value={a} className="capitalize">
-                    {a}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-medium text-gray-600">Category</span>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c} className="capitalize">
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <label className="block">
-            <span className="text-sm font-medium text-gray-600">Date & Time</span>
-            <input
-              type="datetime-local"
-              value={dt}
-              onChange={(e) => setDt(e.target.value)}
-              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-gray-600">Note (Optional)</span>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="e.g., Lunch with team"
-              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50 min-h-[60px]"
-            />
-          </label>
-
-          <div className="flex items-center justify-between pt-2">
-            <button
-              type="submit"
-              disabled={submitting}
-              className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 transition-colors"
-            >
-              {submitting && <LoaderCircle className="size-4 animate-spin mr-2" />}
-              {submitting ? "Saving..." : "Save Changes"}
-            </button>
-            {error && <div className="text-sm text-red-600 text-right">{error}</div>}
-          </div>
-        </form>
+        <h2 className="text-xl font-bold mb-4">{title}</h2>
+        {children}
       </div>
     </div>
   );
 }
+
+function NumberField({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-gray-600">{label}</span>
+      <input
+        type="number"
+        step="0.01"
+        min="0.01"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="0.00"
+        required
+        className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
+      />
+    </label>
+  );
+}
+
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-gray-600">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
+      >
+        {options.map((opt) => (
+          <option key={opt} value={opt} className="capitalize">
+            {opt}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function DatetimeField({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-gray-600">{label}</span>
+      <input
+        type="datetime-local"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
+      />
+    </label>
+  );
+}
+
+function TextareaField({ label, value, onChange, placeholder }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-gray-600">{label}</span>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50 min-h-[60px]"
+      />
+    </label>
+  );
+}
+
+function SubmitRow({ submitting, error, submitLabel, buttonClass }) {
+  return (
+    <div className="flex items-center justify-between pt-2">
+      <button
+        type="submit"
+        disabled={submitting}
+        className={`inline-flex items-center px-4 py-2 rounded-lg text-white font-semibold shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors ${
+          buttonClass || "bg-blue-600 hover:bg-blue-700 focus:ring-blue-500 disabled:bg-blue-400"
+        }`}
+      >
+        {submitting && <LoaderCircle className="size-4 animate-spin mr-2" />}
+        {submitting ? "Saving..." : submitLabel}
+      </button>
+      {error && <div className="text-sm text-red-600 text-right">{error}</div>}
+    </div>
+  );
+}
+
