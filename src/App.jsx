@@ -182,7 +182,7 @@ function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }
     try {
       const { error } = await supabase
         .from("spouse_connections")
-        .insert({ spouse_email: spouseEmail.toLowerCase() });
+        .insert({ user_id: user.id, spouse_email: spouseEmail.trim().toLowerCase() });
       
       if (error) throw error;
       
