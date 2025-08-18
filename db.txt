@@ -1,0 +1,35 @@
+-- Table
+create table if not exists public.expenses (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
+  amount numeric(12,2) not null check (amount >= 0),
+  account text not null check (account in ('gcash','debit card','cash','credit card')),
+  category text not null,
+  note text,
+  created_at timestamptz not null default now()
+);
+-- Helpful indexes
+create index if not exists expenses_created_at_idx on public.expenses(created_at desc);
+create index if not exists expenses_user_id_idx on public.expenses(user_id);
+-- (Optional but recommended for multi-user security)
+-- Enable RLS + attach user automatically
+alter table public.expenses enable row level security;
+create or replace function public.set_expense_user_id()
+returns trigger language plpgsql as $$
+begin
+  if new.user_id is null then new.user_id := auth.uid(); end if;
+  return new;
+end $$;
+drop trigger if exists trg_set_expense_user_id on public.expenses;
+create trigger trg_set_expense_user_id
+before insert on public.expenses
+for each row execute function public.set_expense_user_id();
+-- Policies (users can only see/manage their own rows)
+create policy "read own" on public.expenses
+  for select using (user_id = auth.uid());
+create policy "insert own" on public.expenses
+  for insert with check (user_id = auth.uid());
+create policy "update own" on public.expenses
+  for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "delete own" on public.expenses
+  for delete using (user_id = auth.uid());

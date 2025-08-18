@@ -17,6 +17,10 @@ import {
   LoaderCircle,
   X,
   LogOut,
+  Users,
+  UserPlus,
+  Heart,
+  Trash2,
 } from "lucide-react";
 
 // --- Supabase client (put your keys in .env as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY) ---
@@ -158,6 +162,137 @@ function AuthComponent() {
   );
 }
 
+// --- Spouse Management Modal ---
+function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }) {
+  const [spouseEmail, setSpouseEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleAddSpouse = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    if (spouseEmail.toLowerCase() === user.email.toLowerCase()) {
+      setError("You cannot add yourself as a spouse!");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("spouse_connections")
+        .insert({ spouse_email: spouseEmail.toLowerCase() });
+      
+      if (error) throw error;
+      
+      onSpouseUpdate();
+      setSpouseEmail("");
+      onClose();
+    } catch (err) {
+      setError(err.message || "Failed to add spouse");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveSpouse = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { error } = await supabase
+        .from("spouse_connections")
+        .delete()
+        .eq("user_id", user.id);
+      
+      if (error) throw error;
+      
+      onSpouseUpdate();
+      onClose();
+    } catch (err) {
+      setError(err.message || "Failed to remove spouse");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-white w-full max-w-md p-6 rounded-2xl shadow-xl relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
+          <X className="size-6" />
+        </button>
+        
+        <div className="flex items-center gap-3 mb-4">
+          <Heart className="size-6 text-red-500" />
+          <h2 className="text-xl font-bold">Spouse Management</h2>
+        </div>
+
+        {spouseConnection ? (
+          <div className="space-y-4">
+            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center gap-2 text-green-800">
+                <Users className="size-5" />
+                <span className="font-medium">Connected to:</span>
+              </div>
+              <p className="text-green-700 mt-1">{spouseConnection.spouse_email}</p>
+              {spouseConnection.spouse_user_id && (
+                <p className="text-sm text-green-600 mt-1">✓ Active account found</p>
+              )}
+            </div>
+            
+            <button
+              onClick={handleRemoveSpouse}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-red-400 transition-colors"
+            >
+              {loading ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              {loading ? "Removing..." : "Remove Spouse Connection"}
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleAddSpouse} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-2">
+                Spouse Email Address
+              </label>
+              <input
+                type="email"
+                value={spouseEmail}
+                onChange={(e) => setSpouseEmail(e.target.value)}
+                placeholder="spouse@email.com"
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Your expenses will be combined automatically. No confirmation needed.
+              </p>
+            </div>
+
+            {error && (
+              <div className="text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors"
+            >
+              {loading ? <LoaderCircle className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
+              {loading ? "Adding..." : "Add Spouse"}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- Main App Component ---
 export default function App() {
   const [user, setUser] = useState(null);
@@ -197,17 +332,39 @@ export default function App() {
   return <ExpenseApp user={user} onSignOut={handleSignOut} />;
 }
 
-// --- Expense App Component (your original app logic) ---
+// --- Expense App Component ---
 function ExpenseApp({ user, onSignOut }) {
   const [viewMonth, setViewMonth] = useState(firstDayOfMonth(new Date()));
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isSpouseModalOpen, setIsSpouseModalOpen] = useState(false);
+  const [spouseConnection, setSpouseConnection] = useState(null);
 
   const nextMonthDisabled = useMemo(() => addMonths(viewMonth, 1) > firstDayOfMonth(new Date()), [viewMonth]);
   const monthLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(viewMonth), [viewMonth]);
   const total = useMemo(() => expenses.reduce((sum, e) => sum + parseFloat(String(e.amount || 0)), 0), [expenses]);
+
+  // Fetch spouse connection
+  const fetchSpouseConnection = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("spouse_connections")
+        .select("*")
+        .eq("user_id", user.id)
+        .single();
+      
+      if (error && error.code !== 'PGRST116') throw error;
+      setSpouseConnection(data);
+    } catch (err) {
+      console.error("Error fetching spouse connection:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSpouseConnection();
+  }, [user.id]);
 
   useEffect(() => {
     const fetchExpenses = async () => {
@@ -216,22 +373,53 @@ function ExpenseApp({ user, onSignOut }) {
       try {
         const start = firstDayOfMonth(viewMonth);
         const end = addMonths(start, 1);
-        const { data, error } = await supabase
+        
+        // Fetch user's own expenses
+        const { data: userExpenses, error: userError } = await supabase
           .from("expenses")
           .select("*")
+          .eq("user_id", user.id)
           .gte("created_at", toISODate(start))
           .lt("created_at", toISODate(end))
           .order("created_at", { ascending: false });
-        if (error) throw error;
-        setExpenses(data || []);
+        
+        if (userError) throw userError;
+        
+        let allExpenses = userExpenses || [];
+        
+        // If spouse is connected, fetch their expenses too
+        if (spouseConnection?.spouse_user_id) {
+          const { data: spouseExpenses, error: spouseError } = await supabase
+            .from("expenses")
+            .select("*")
+            .eq("user_id", spouseConnection.spouse_user_id)
+            .gte("created_at", toISODate(start))
+            .lt("created_at", toISODate(end))
+            .order("created_at", { ascending: false });
+          
+          if (spouseError) throw spouseError;
+          
+          // Mark spouse expenses and combine
+          const markedSpouseExpenses = (spouseExpenses || []).map(expense => ({
+            ...expense,
+            is_spouse_expense: true,
+            spouse_email: spouseConnection.spouse_email
+          }));
+          
+          allExpenses = [...allExpenses, ...markedSpouseExpenses]
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        }
+        
+        setExpenses(allExpenses);
       } catch (err) {
         setError(err.message || "Failed to load expenses.");
       } finally {
         setLoading(false);
       }
     };
+    
     fetchExpenses();
-  }, [viewMonth]);
+  }, [viewMonth, user.id, spouseConnection]);
 
   const handleAddExpense = (newExpense) => {
     const rowDate = new Date(newExpense.created_at);
@@ -239,7 +427,11 @@ function ExpenseApp({ user, onSignOut }) {
     if (inMonth) {
       setExpenses((old) => [newExpense, ...old].sort((a,b) => new Date(b.created_at) - new Date(a.created_at)));
     }
-    setIsFormOpen(false); // Close modal on success
+    setIsFormOpen(false);
+  };
+
+  const handleSpouseUpdate = () => {
+    fetchSpouseConnection();
   };
 
   return (
@@ -249,11 +441,25 @@ function ExpenseApp({ user, onSignOut }) {
         <header className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Expense Tracker</h1>
-            <p className="text-sm text-gray-500">Welcome back, {user.email}!</p>
+            <p className="text-sm text-gray-500">
+              Welcome back, {user.email}!
+              {spouseConnection && (
+                <span className="ml-2 text-red-500">
+                  💕 Connected to {spouseConnection.spouse_email}
+                </span>
+              )}
+            </p>
           </div>
           <div className="flex items-center justify-between gap-4">
              <MonthNavigator viewMonth={viewMonth} setViewMonth={setViewMonth} nextMonthDisabled={nextMonthDisabled} monthLabel={monthLabel} />
              <div className="flex items-center gap-2">
+               <button
+                onClick={() => setIsSpouseModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white font-semibold shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
+              >
+                <Heart className="size-5" />
+                <span className="hidden sm:inline">Spouse</span>
+              </button>
                <button
                 onClick={() => setIsFormOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
@@ -275,11 +481,13 @@ function ExpenseApp({ user, onSignOut }) {
         {/* --- Main Content --- */}
         <main>
           <div className="mb-6 p-4 bg-white rounded-2xl shadow-sm flex items-center justify-between">
-            <div className="text-sm text-gray-500">Total for {monthLabel}</div>
+            <div className="text-sm text-gray-500">
+              {spouseConnection ? "Combined total" : "Total"} for {monthLabel}
+            </div>
             <div className="text-2xl font-bold text-gray-900">{phpCurrency(total)}</div>
           </div>
 
-          <ExpenseList expenses={expenses} loading={loading} monthLabel={monthLabel} />
+          <ExpenseList expenses={expenses} loading={loading} monthLabel={monthLabel} userEmail={user.email} />
         </main>
 
         <ExpenseFormModal 
@@ -288,13 +496,21 @@ function ExpenseApp({ user, onSignOut }) {
           onAddExpense={handleAddExpense} 
         />
         
+        <SpouseModal
+          isOpen={isSpouseModalOpen}
+          onClose={() => setIsSpouseModalOpen(false)}
+          user={user}
+          spouseConnection={spouseConnection}
+          onSpouseUpdate={handleSpouseUpdate}
+        />
+        
         <footer className="py-8 text-center text-xs text-gray-400">Built with React + Supabase</footer>
       </div>
     </div>
   );
 }
 
-// --- Sub-components for better organization (unchanged) ---
+// --- Sub-components for better organization ---
 
 function MonthNavigator({ viewMonth, setViewMonth, nextMonthDisabled, monthLabel }) {
   const gotoPrevMonth = () => setViewMonth((m) => addMonths(m, -1));
@@ -310,7 +526,7 @@ function MonthNavigator({ viewMonth, setViewMonth, nextMonthDisabled, monthLabel
   );
 }
 
-function ExpenseList({ expenses, loading, monthLabel }) {
+function ExpenseList({ expenses, loading, monthLabel, userEmail }) {
   if (loading) {
     return (
       <div className="flex justify-center items-center p-12 bg-white rounded-2xl shadow-sm">
@@ -330,22 +546,29 @@ function ExpenseList({ expenses, loading, monthLabel }) {
 
   return (
     <div className="space-y-3">
-      {expenses.map((e) => <ExpenseListItem key={e.id} expense={e} />)}
+      {expenses.map((e) => <ExpenseListItem key={e.id} expense={e} userEmail={userEmail} />)}
     </div>
   );
 }
 
-function ExpenseListItem({ expense }) {
-  const { amount, account, category, note, created_at } = expense;
+function ExpenseListItem({ expense, userEmail }) {
+  const { amount, account, category, note, created_at, is_spouse_expense, spouse_email } = expense;
   const date = new Date(created_at);
 
   return (
-    <div className="bg-white p-4 rounded-2xl shadow-sm flex items-center gap-4">
-      <div className="p-3 bg-blue-100 text-blue-600 rounded-full">
+    <div className={`bg-white p-4 rounded-2xl shadow-sm flex items-center gap-4 ${is_spouse_expense ? 'border-l-4 border-red-200' : ''}`}>
+      <div className={`p-3 rounded-full ${is_spouse_expense ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
         {categoryIcons[category] || <MoreHorizontal className="size-5" />}
       </div>
       <div className="flex-1">
-        <p className="font-semibold capitalize text-gray-800">{note || category}</p>
+        <div className="flex items-center gap-2">
+          <p className="font-semibold capitalize text-gray-800">{note || category}</p>
+          {is_spouse_expense && (
+            <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">
+              {spouse_email}
+            </span>
+          )}
+        </div>
         <p className="text-sm text-gray-500">
           {date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} • <span className="capitalize">{account}</span>
         </p>
