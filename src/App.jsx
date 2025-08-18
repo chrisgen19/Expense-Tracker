@@ -434,6 +434,8 @@ function ExpenseApp({ user, onSignOut }) {
     fetchSpouseConnection();
   };
 
+  const isCombined = Boolean(spouseConnection?.spouse_user_id);
+
   return (
     <div className="min-h-screen w-full bg-gray-50 text-gray-800">
       <div className="max-w-4xl mx-auto p-4 sm:p-6">
@@ -482,7 +484,7 @@ function ExpenseApp({ user, onSignOut }) {
         <main>
           <div className="mb-6 p-4 bg-white rounded-2xl shadow-sm flex items-center justify-between">
             <div className="text-sm text-gray-500">
-              {spouseConnection ? "Combined total" : "Total"} for {monthLabel}
+              {isCombined ? "Combined total" : "Total"} for {monthLabel}
             </div>
             <div className="text-2xl font-bold text-gray-900">{phpCurrency(total)}</div>
           </div>
