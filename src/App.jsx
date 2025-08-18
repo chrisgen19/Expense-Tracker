@@ -21,6 +21,8 @@ import {
   UserPlus,
   Heart,
   Trash2,
+  Pencil,
+  Lock,
 } from "lucide-react";
 
 // --- Supabase client (put your keys in .env as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY) ---
@@ -341,6 +343,7 @@ function ExpenseApp({ user, onSignOut }) {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isSpouseModalOpen, setIsSpouseModalOpen] = useState(false);
   const [spouseConnection, setSpouseConnection] = useState(null);
+  const [editing, setEditing] = useState(null);
 
   const nextMonthDisabled = useMemo(() => addMonths(viewMonth, 1) > firstDayOfMonth(new Date()), [viewMonth]);
   const monthLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(viewMonth), [viewMonth]);
@@ -430,6 +433,32 @@ function ExpenseApp({ user, onSignOut }) {
     setIsFormOpen(false);
   };
 
+  const handleEditOpen = (expense) => setEditing(expense);
+  const handleEditClose = () => setEditing(null);
+
+  const handleExpenseUpdated = (updated) => {
+    // If date moved out of the visible month, remove it; else replace it.
+    const rowDate = new Date(updated.created_at);
+    const inMonth = rowDate >= firstDayOfMonth(viewMonth) && rowDate < addMonths(viewMonth, 1);
+    setExpenses((old) => {
+      const without = old.filter(e => e.id !== updated.id);
+      return inMonth
+        ? [updated, ...without].sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
+        : without;
+    });
+    setEditing(null);
+  };
+
+  const handleDeleteExpense = async (id) => {
+    if (!confirm("Delete this expense?")) return;
+    const { error } = await supabase.from("expenses").delete().eq("id", id);
+    if (error) {
+      alert(error.message || "Failed to delete expense.");
+      return;
+    }
+    setExpenses((old) => old.filter(e => e.id !== id));
+  };
+
   const handleSpouseUpdate = () => {
     fetchSpouseConnection();
   };
@@ -443,26 +472,31 @@ function ExpenseApp({ user, onSignOut }) {
         <header className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Expense Tracker</h1>
-            <p className="text-sm text-gray-500">
-              Welcome back, {user.email}!
+            <div className="text-sm text-gray-500">
+              <div>Welcome back, {user.email}!</div>
               {spouseConnection && (
-                <p className="ml-2 text-red-500">
+                <div className="mt-1 text-red-500">
                   💕 Connected to {spouseConnection.spouse_email}
-                </p>
+                </div>
               )}
-            </p>
+            </div>
           </div>
           <div className="flex items-center justify-between gap-4">
-             <MonthNavigator viewMonth={viewMonth} setViewMonth={setViewMonth} nextMonthDisabled={nextMonthDisabled} monthLabel={monthLabel} />
-             <div className="flex items-center gap-2">
-               <button
+            <MonthNavigator
+              viewMonth={viewMonth}
+              setViewMonth={setViewMonth}
+              nextMonthDisabled={nextMonthDisabled}
+              monthLabel={monthLabel}
+            />
+            <div className="flex items-center gap-2">
+              <button
                 onClick={() => setIsSpouseModalOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white font-semibold shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
               >
                 <Heart className="size-5" />
                 <span className="hidden sm:inline">Spouse</span>
               </button>
-               <button
+              <button
                 onClick={() => setIsFormOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
               >
@@ -476,7 +510,7 @@ function ExpenseApp({ user, onSignOut }) {
               >
                 <LogOut className="size-5" />
               </button>
-             </div>
+            </div>
           </div>
         </header>
 
@@ -484,20 +518,29 @@ function ExpenseApp({ user, onSignOut }) {
         <main>
           <div className="mb-6 p-4 bg-white rounded-2xl shadow-sm flex items-center justify-between">
             <div className="text-sm text-gray-500">
-              {isCombined ? "Combined total" : "Total"} for {monthLabel}
+              {Boolean(spouseConnection?.spouse_user_id) ? "Combined total" : "Total"} for {monthLabel}
             </div>
             <div className="text-2xl font-bold text-gray-900">{phpCurrency(total)}</div>
           </div>
 
-          <ExpenseList expenses={expenses} loading={loading} monthLabel={monthLabel} userEmail={user.email} />
+          {/* Keep only ONE list */}
+          <ExpenseList
+            expenses={expenses}
+            loading={loading}
+            monthLabel={monthLabel}
+            userEmail={user.email}
+            currentUserId={user.id}
+            onEdit={handleEditOpen}
+            onDelete={handleDeleteExpense}
+          />
         </main>
 
-        <ExpenseFormModal 
-          isOpen={isFormOpen} 
-          onClose={() => setIsFormOpen(false)} 
-          onAddExpense={handleAddExpense} 
+        <ExpenseFormModal
+          isOpen={isFormOpen}
+          onClose={() => setIsFormOpen(false)}
+          onAddExpense={handleAddExpense}
         />
-        
+
         <SpouseModal
           isOpen={isSpouseModalOpen}
           onClose={() => setIsSpouseModalOpen(false)}
@@ -505,11 +548,24 @@ function ExpenseApp({ user, onSignOut }) {
           spouseConnection={spouseConnection}
           onSpouseUpdate={handleSpouseUpdate}
         />
-        
-        <footer className="py-8 text-center text-xs text-gray-400">Built with React + Supabase</footer>
+
+        {/* Single footer */}
+        <footer className="py-8 text-center text-xs text-gray-400">
+          Built with React + Supabase
+        </footer>
+
+        {editing && (
+          <EditExpenseModal
+            isOpen={true}
+            expense={editing}
+            onClose={handleEditClose}
+            onSave={handleExpenseUpdated}
+          />
+        )}
       </div>
     </div>
   );
+
 }
 
 // --- Sub-components for better organization ---
@@ -528,7 +584,7 @@ function MonthNavigator({ viewMonth, setViewMonth, nextMonthDisabled, monthLabel
   );
 }
 
-function ExpenseList({ expenses, loading, monthLabel, userEmail }) {
+function ExpenseList({ expenses, loading, monthLabel, userEmail, currentUserId, onEdit, onDelete }) {
   if (loading) {
     return (
       <div className="flex justify-center items-center p-12 bg-white rounded-2xl shadow-sm">
@@ -548,14 +604,24 @@ function ExpenseList({ expenses, loading, monthLabel, userEmail }) {
 
   return (
     <div className="space-y-3">
-      {expenses.map((e) => <ExpenseListItem key={e.id} expense={e} userEmail={userEmail} />)}
+      {expenses.map((e) => (
+        <ExpenseListItem
+          key={e.id}
+          expense={e}
+          userEmail={userEmail}
+          currentUserId={currentUserId}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      ))}
     </div>
   );
 }
 
-function ExpenseListItem({ expense, userEmail }) {
-  const { amount, account, category, note, created_at, is_spouse_expense, spouse_email } = expense;
+function ExpenseListItem({ expense, userEmail, currentUserId, onEdit, onDelete }) {
+  const { id, user_id, amount, account, category, note, created_at, is_spouse_expense, spouse_email } = expense;
   const date = new Date(created_at);
+  const canManage = user_id === currentUserId;
 
   return (
     <div className={`bg-white p-4 rounded-2xl shadow-sm flex items-center gap-4 ${is_spouse_expense ? 'border-l-4 border-red-200' : ''}`}>
@@ -578,6 +644,25 @@ function ExpenseListItem({ expense, userEmail }) {
       <div className="text-right">
         <p className="font-bold text-lg text-gray-900">{phpCurrency(parseFloat(String(amount)))}</p>
         <p className="text-xs text-gray-400">{date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</p>
+
+        <div className="flex items-center justify-end gap-2 mt-2">
+          <button
+            className={`p-2 rounded-lg ${canManage ? 'bg-white hover:bg-gray-100' : 'bg-gray-50 opacity-60 cursor-not-allowed'} shadow-sm transition-colors`}
+            title={canManage ? 'Edit' : "You can’t edit spouse expenses"}
+            onClick={() => canManage && onEdit(expense)}
+            disabled={!canManage}
+          >
+            {canManage ? <Pencil className="size-4" /> : <Lock className="size-4" />}
+          </button>
+          <button
+            className={`p-2 rounded-lg ${canManage ? 'bg-white hover:bg-gray-100' : 'bg-gray-50 opacity-60 cursor-not-allowed'} shadow-sm transition-colors`}
+            title={canManage ? 'Delete' : "You can’t delete spouse expenses"}
+            onClick={() => canManage && onDelete(id)}
+            disabled={!canManage}
+          >
+            <Trash2 className="size-4" />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -665,6 +750,152 @@ function ExpenseFormModal({ isOpen, onClose, onAddExpense }) {
               className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 transition-colors">
               {submitting && <LoaderCircle className="size-4 animate-spin mr-2" />}
               {submitting ? "Adding..." : "Add Expense"}
+            </button>
+            {error && <div className="text-sm text-red-600 text-right">{error}</div>}
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditExpenseModal({ isOpen, expense, onClose, onSave }) {
+  const [amount, setAmount] = useState("");
+  const [account, setAccount] = useState("gcash");
+  const [category, setCategory] = useState("food");
+  const [dt, setDt] = useState(toLocalDatetimeInputValue());
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && expense) {
+      setAmount(String(expense.amount ?? ""));
+      setAccount(expense.account ?? "gcash");
+      setCategory(expense.category ?? "food");
+      setDt(toLocalDatetimeInputValue(new Date(expense.created_at)));
+      setNote(expense.note ?? "");
+      setError(null);
+    }
+  }, [isOpen, expense]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const amt = parseFloat(amount);
+    if (Number.isNaN(amt) || amt <= 0) {
+      setError("Amount must be a positive number.");
+      setSubmitting(false);
+      return;
+    }
+    try {
+      const payload = {
+        amount: amt,
+        account,
+        category,
+        note: note || null,
+        created_at: new Date(dt).toISOString(),
+      };
+      const { data, error } = await supabase
+        .from("expenses")
+        .update(payload)
+        .eq("id", expense.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      onSave(data);
+    } catch (err) {
+      setError(err.message || "Failed to update expense.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-white w-full max-w-md p-6 rounded-2xl shadow-xl relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
+          <X className="size-6" />
+        </button>
+        <h2 className="text-xl font-bold mb-4">Edit Expense</h2>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <label className="block">
+            <span className="text-sm font-medium text-gray-600">Amount</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
+            />
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-sm font-medium text-gray-600">Account</span>
+              <select
+                value={account}
+                onChange={(e) => setAccount(e.target.value)}
+                className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
+              >
+                {ACCOUNTS.map((a) => (
+                  <option key={a} value={a} className="capitalize">
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-gray-600">Category</span>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c} className="capitalize">
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-600">Date & Time</span>
+            <input
+              type="datetime-local"
+              value={dt}
+              onChange={(e) => setDt(e.target.value)}
+              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-600">Note (Optional)</span>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g., Lunch with team"
+              className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-500 focus:ring-opacity-50 min-h-[60px]"
+            />
+          </label>
+
+          <div className="flex items-center justify-between pt-2">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 transition-colors"
+            >
+              {submitting && <LoaderCircle className="size-4 animate-spin mr-2" />}
+              {submitting ? "Saving..." : "Save Changes"}
             </button>
             {error && <div className="text-sm text-red-600 text-right">{error}</div>}
           </div>
