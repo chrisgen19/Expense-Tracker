@@ -1436,12 +1436,6 @@ useEffect(() => {
           </div>
         </header>
 
-        {/* Tabs */}
-        <div className="mb-4 inline-flex rounded-xl bg-white p-1 shadow-sm">
-          <TabButton label="Expenses" active={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} />
-          <TabButton label="Income" active={activeTab === "income"} onClick={() => setActiveTab("income")} />
-        </div>
-
         {/* --- Summary --- */}
         <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="p-4 bg-white rounded-2xl shadow-sm">
@@ -1489,6 +1483,11 @@ useEffect(() => {
           <MTDChart data={mtdSeries} isNetHidden={isNetHidden} />
         </section>
 
+        {/* Tabs */}
+        <div className="mb-4 inline-flex rounded-xl bg-white p-1 shadow-sm sticky top-0 z-10">
+          <TabButton label="Expenses" active={activeTab === "expenses"} onClick={() => setActiveTab("expenses")} />
+          <TabButton label="Income" active={activeTab === "income"} onClick={() => setActiveTab("income")} />
+        </div>
 
         {/* --- Main Content --- */}
         <main>
