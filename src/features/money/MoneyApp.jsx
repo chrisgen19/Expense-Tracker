@@ -110,6 +110,21 @@ function maskCurrencyString(formatted, { dropDecimals = false, maskChar = "*" } 
 // Persist the user's net-privacy choice per user id
 const NET_PRIVACY_KEY = (uid) => `moneyapp:net-privacy:${uid}`;
 
+// Key like "2025-08-19" from an ISO string or Date
+function ymdKeyFromISO(dt) {
+  const d = new Date(dt);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatDayLabelFromKey(key) {
+  const [y, m, d] = key.split("-");
+  const dt = new Date(Number(y), Number(m) - 1, Number(d));
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(dt);
+}
+
 // --- Spouse Management Modal ---
 function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }) {
   const [spouseEmail, setSpouseEmail] = useState("");
@@ -272,7 +287,10 @@ function MonthNavigator({ viewMonth, setViewMonth, nextMonthDisabled, monthLabel
 // =====================
 // Lists & Items
 // =====================
-function ExpenseList({ expenses, loading, error, monthLabel, currentUserId, onEdit, onDelete }) {
+function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit, onDelete, isNetHidden }) {
+  const [collapsed, setCollapsed] = useState({});
+  const toggle = (k) => setCollapsed((p) => ({ ...p, [k]: !p[k] }));
+
   if (loading) {
     return (
       <div className="flex justify-center items-center p-12 bg-white rounded-2xl shadow-sm">
@@ -283,7 +301,7 @@ function ExpenseList({ expenses, loading, error, monthLabel, currentUserId, onEd
   if (error) {
     return <div className="p-6 bg-white rounded-2xl shadow-sm text-red-600">{error}</div>;
   }
-  if (!expenses?.length) {
+  if (!groups?.length) {
     return (
       <div className="p-12 text-center text-gray-500 bg-white rounded-2xl shadow-sm">
         <p>No expenses for {monthLabel} yet.</p>
@@ -291,14 +309,70 @@ function ExpenseList({ expenses, loading, error, monthLabel, currentUserId, onEd
       </div>
     );
   }
+
   return (
-    <div className="space-y-3">
-      {expenses.map((e) => (
-        <RowCard key={e.id} row={e} currentUserId={currentUserId} icons={expenseIcons} kind="expense" onEdit={() => onEdit(e)} onDelete={() => onDelete(e.id)} />
-      ))}
+    <div className="space-y-4">
+      {groups.map((g) => {
+        const netText = isNetHidden
+          ? maskCurrencyString(phpCurrency(g.endBalance), { dropDecimals: true, maskChar: "*" })
+          : phpCurrency(g.endBalance);
+
+        return (
+          <section key={g.key} className="rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm">
+            {/* Day header */}
+            <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200 sticky top-0">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => toggle(g.key)}
+                  className="p-1 rounded-lg hover:bg-gray-100 transition"
+                  title={collapsed[g.key] ? "Expand" : "Collapse"}
+                >
+                  <ChevronRight
+                    className={`size-4 text-gray-600 transition-transform ${collapsed[g.key] ? "" : "rotate-90"}`}
+                  />
+                </button>
+                <div className="font-semibold text-gray-800">{g.label}</div>
+              </div>
+
+              <div className="flex items-center gap-4 text-sm">
+                <div className="text-gray-600">
+                  In: <span className="font-semibold text-emerald-700">{phpCurrency(g.incomeToday)}</span>
+                </div>
+                <div className="text-gray-600">
+                  Spent: <span className="font-semibold text-blue-700">{phpCurrency(g.spentToday)}</span>
+                </div>
+                <div className="text-gray-600">
+                  Start: <span className="font-semibold">{phpCurrency(g.startBalance)}</span>
+                </div>
+                <div className={`font-semibold ${g.endBalance >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                  Net: {netText}
+                </div>
+              </div>
+            </div>
+
+            {/* Rows */}
+            {!collapsed[g.key] && (
+              <div className="p-3 space-y-3">
+                {g.items.map((e) => (
+                  <RowCard
+                    key={e.id}
+                    row={e}
+                    currentUserId={currentUserId}
+                    icons={expenseIcons}
+                    kind="expense"
+                    onEdit={() => onEdit(e)}
+                    onDelete={() => onDelete(e.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
+
 
 function IncomeList({ incomes, loading, error, monthLabel, currentUserId, onEdit, onDelete }) {
   if (loading) {
@@ -806,6 +880,73 @@ useEffect(() => {
   );
   const net = useMemo(() => totalIncome - totalExpenses, [totalIncome, totalExpenses]);
 
+  // Income per day (includes spouse, since you already merged into `incomes`)
+  const incomeByDay = useMemo(() => {
+    const m = new Map();
+    for (const i of incomes) {
+      const k = ymdKeyFromISO(i.created_at);
+      const amt = parseFloat(String(i.amount || 0));
+      m.set(k, (m.get(k) || 0) + (Number.isFinite(amt) ? amt : 0));
+    }
+    return m;
+  }, [incomes]);
+
+  // Group expenses by day and compute daily balances:
+  // startBalance (after today's income, before spending) and endBalance (start - spentToday)
+  const expenseGroups = useMemo(() => {
+    const buckets = new Map();      // dayKey -> expense rows
+    const expenseByDay = new Map(); // dayKey -> sum of today's expenses
+
+    for (const e of expenses) {
+      const k = ymdKeyFromISO(e.created_at);
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(e);
+      const amt = parseFloat(String(e.amount || 0));
+      expenseByDay.set(k, (expenseByDay.get(k) || 0) + (Number.isFinite(amt) ? amt : 0));
+    }
+
+    // Sort each day's items (newest first)
+    for (const arr of buckets.values()) {
+      arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }
+
+    // Build sections in ascending date to maintain running totals,
+    // then render newest first
+    const allKeys = new Set([...buckets.keys(), ...incomeByDay.keys()]);
+    const keysAsc = Array.from(allKeys).sort(); // "YYYY-MM-DD"
+
+    let cumIncome = 0;
+    let cumExpenses = 0;
+    const sectionsByKey = new Map();
+
+    for (const k of keysAsc) {
+      const incToday = incomeByDay.get(k) || 0;
+      cumIncome += incToday;
+
+      const spentToday = expenseByDay.get(k) || 0;
+
+      const startBalance = cumIncome - cumExpenses; // before spending today
+      const endBalance = startBalance - spentToday; // after spending today
+
+      cumExpenses += spentToday;
+
+      if (buckets.has(k)) {
+        sectionsByKey.set(k, {
+          key: k,
+          label: formatDayLabelFromKey(k),
+          items: buckets.get(k),
+          incomeToday: incToday,
+          spentToday,
+          startBalance,
+          endBalance, // this is the "Net Money I have on that day"
+        });
+      }
+    }
+
+    return Array.from(sectionsByKey.values()).sort((a, b) => b.key.localeCompare(a.key));
+  }, [expenses, incomeByDay]);
+
+
   // Fetch spouse connection
   const fetchSpouseConnection = async () => {
     try {
@@ -1084,13 +1225,14 @@ useEffect(() => {
         <main>
           {activeTab === "expenses" ? (
             <ExpenseList
-              expenses={expenses}
+              groups={expenseGroups}
               loading={loadingExpenses}
               error={errorExpenses}
               monthLabel={monthLabel}
               currentUserId={user.id}
               onEdit={setEditingExpense}
               onDelete={handleDeleteExpense}
+              isNetHidden={isNetHidden}
             />
           ) : (
             <IncomeList
