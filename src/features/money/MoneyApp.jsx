@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import {
   ChevronLeft,
@@ -140,6 +140,38 @@ function formatDayLabelFromKey(key) {
 
 function shortMD(dateObj) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(dateObj);
+}
+
+/** Infinite loader for day-based groups (newest-first) */
+function useInfiniteGroups(groupsFull, deps = [], { initialDays = 7, stepDays = 7 } = {}) {
+  const [visibleCount, setVisibleCount] = useState(initialDays);
+  const sentinelRef = useRef(null);
+
+  // Reset when deps change (e.g., month or user)
+  useEffect(() => {
+    setVisibleCount(initialDays);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  // IntersectionObserver to auto-load more when bottom sentinel is visible
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      const e = entries[0];
+      if (e.isIntersecting) {
+        setVisibleCount((c) => Math.min(c + stepDays, groupsFull.length || 0));
+      }
+    }, { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [groupsFull.length, stepDays]);
+
+  const groups = groupsFull.slice(0, visibleCount);
+  const hasMore = visibleCount < (groupsFull?.length || 0);
+  const loadMore = () => setVisibleCount((c) => Math.min(c + stepDays, groupsFull.length || 0));
+
+  return { groups, hasMore, sentinelRef, loadMore };
 }
 
 // --- Spouse Management Modal ---
@@ -304,9 +336,56 @@ function MonthNavigator({ viewMonth, setViewMonth, nextMonthDisabled, monthLabel
 // =====================
 // Lists & Items
 // =====================
-function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit, onDelete, isNetHidden }) {
+function ExpenseList({
+  groups: groupsFull,
+  loading,
+  error,
+  monthLabel,
+  currentUserId,
+  onEdit,
+  onDelete,
+  isNetHidden,
+}) {
+  const INITIAL_DAYS = 7; // tweak to taste
+  const STEP_DAYS = 7;    // tweak to taste
+
   const [collapsed, setCollapsed] = useState({});
+  const [visibleCount, setVisibleCount] = useState(
+    Math.min(INITIAL_DAYS, groupsFull?.length || 0)
+  );
+  const sentinelRef = React.useRef(null);
+
   const toggle = (k) => setCollapsed((p) => ({ ...p, [k]: !p[k] }));
+
+  // Reset visible days when the month/groups change
+  useEffect(() => {
+    setVisibleCount(Math.min(INITIAL_DAYS, groupsFull?.length || 0));
+    setCollapsed({});
+  }, [groupsFull]);
+
+  // Infinite loader using IntersectionObserver
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+
+    const hasMore = visibleCount < (groupsFull?.length || 0);
+    if (!hasMore) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (e.isIntersecting) {
+          setVisibleCount((c) =>
+            Math.min(c + STEP_DAYS, groupsFull?.length || 0)
+          );
+        }
+      },
+      { root: null, rootMargin: "200px", threshold: 0 }
+    );
+
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visibleCount, groupsFull]);
 
   if (loading) {
     return (
@@ -318,7 +397,7 @@ function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit
   if (error) {
     return <div className="p-6 bg-white rounded-2xl shadow-sm text-red-600">{error}</div>;
   }
-  if (!groups?.length) {
+  if (!groupsFull?.length) {
     return (
       <div className="p-12 text-center text-gray-500 bg-white rounded-2xl shadow-sm">
         <p>No expenses for {monthLabel} yet.</p>
@@ -327,15 +406,21 @@ function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit
     );
   }
 
+  const visibleGroups = groupsFull.slice(0, visibleCount);
+  const hasMore = visibleCount < groupsFull.length;
+
   return (
     <div className="space-y-4">
-      {groups.map((g) => {
+      {visibleGroups.map((g) => {
         const netText = isNetHidden
           ? maskCurrencyString(phpCurrency(g.endBalance), { dropDecimals: true, maskChar: "*" })
           : phpCurrency(g.endBalance);
 
         return (
-          <section key={g.key} className="rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm">
+          <section
+            key={g.key}
+            className="rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm"
+          >
             {/* Day header */}
             <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200 sticky top-0">
               <div className="flex items-center gap-2">
@@ -345,7 +430,9 @@ function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit
                   title={collapsed[g.key] ? "Expand" : "Collapse"}
                 >
                   <ChevronRight
-                    className={`size-4 text-gray-600 transition-transform ${collapsed[g.key] ? "" : "rotate-90"}`}
+                    className={`size-4 text-gray-600 transition-transform ${
+                      collapsed[g.key] ? "" : "rotate-90"
+                    }`}
                   />
                 </button>
                 <div className="font-semibold text-gray-800">{g.label}</div>
@@ -353,15 +440,25 @@ function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit
 
               <div className="flex items-center gap-4 text-sm">
                 <div className="text-gray-600">
-                  In: <span className="font-semibold text-emerald-700">{phpCurrency(g.incomeToday)}</span>
+                  In:{" "}
+                  <span className="font-semibold text-emerald-700">
+                    {phpCurrency(g.incomeToday)}
+                  </span>
                 </div>
                 <div className="text-gray-600">
-                  Spent: <span className="font-semibold text-blue-700">{phpCurrency(g.spentToday)}</span>
+                  Spent:{" "}
+                  <span className="font-semibold text-blue-700">
+                    {phpCurrency(g.spentToday)}
+                  </span>
                 </div>
                 <div className="text-gray-600">
                   Start: <span className="font-semibold">{phpCurrency(g.startBalance)}</span>
                 </div>
-                <div className={`font-semibold ${g.endBalance >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                <div
+                  className={`font-semibold ${
+                    g.endBalance >= 0 ? "text-emerald-600" : "text-red-600"
+                  }`}
+                >
                   Net: {netText}
                 </div>
               </div>
@@ -386,13 +483,85 @@ function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit
           </section>
         );
       })}
+
+      {/* Infinite scroll sentinel */}
+      <div ref={sentinelRef} />
+
+      {/* Fallback manual load-more */}
+      {hasMore && (
+        <div className="pt-2 flex justify-center">
+          <button
+            onClick={() =>
+              setVisibleCount((c) => Math.min(c + STEP_DAYS, groupsFull.length))
+            }
+            className="px-4 py-2 rounded-lg bg-white border shadow-sm text-sm hover:bg-gray-50"
+          >
+            Load {STEP_DAYS} more days
+          </button>
+        </div>
+      )}
+      {!hasMore && (
+        <div className="pt-2 text-center text-xs text-gray-400">
+          End of month
+        </div>
+      )}
     </div>
   );
 }
 
-function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit, onDelete, isNetHidden }) {
+
+function IncomeList({
+  groups: groupsFull,
+  loading,
+  error,
+  monthLabel,
+  currentUserId,
+  onEdit,
+  onDelete,
+  isNetHidden,
+  /** optional: pass a reset key (e.g., viewMonthKey) if you want to force reset on month change */
+  resetKey,
+}) {
+  const INITIAL_DAYS = 7; // tweak to taste
+  const STEP_DAYS = 7;    // tweak to taste
+
   const [collapsed, setCollapsed] = useState({});
+  const [visibleCount, setVisibleCount] = useState(
+    Math.min(INITIAL_DAYS, groupsFull?.length || 0)
+  );
+  const sentinelRef = React.useRef(null);
+
   const toggle = (k) => setCollapsed((p) => ({ ...p, [k]: !p[k] }));
+
+  // Reset visible days when the month/groups/resetKey change
+  useEffect(() => {
+    setVisibleCount(Math.min(INITIAL_DAYS, groupsFull?.length || 0));
+    setCollapsed({});
+  }, [groupsFull, resetKey]);
+
+  // Infinite loader using IntersectionObserver
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+
+    const hasMore = visibleCount < (groupsFull?.length || 0);
+    if (!hasMore) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (e.isIntersecting) {
+          setVisibleCount((c) =>
+            Math.min(c + STEP_DAYS, groupsFull?.length || 0)
+          );
+        }
+      },
+      { root: null, rootMargin: "200px", threshold: 0 }
+    );
+
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visibleCount, groupsFull]);
 
   if (loading) {
     return (
@@ -404,7 +573,7 @@ function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit,
   if (error) {
     return <div className="p-6 bg-white rounded-2xl shadow-sm text-red-600">{error}</div>;
   }
-  if (!groups?.length) {
+  if (!groupsFull?.length) {
     return (
       <div className="p-12 text-center text-gray-500 bg-white rounded-2xl shadow-sm">
         <p>No income for {monthLabel} yet.</p>
@@ -413,15 +582,21 @@ function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit,
     );
   }
 
+  const visibleGroups = groupsFull.slice(0, visibleCount);
+  const hasMore = visibleCount < groupsFull.length;
+
   return (
     <div className="space-y-4">
-      {groups.map((g) => {
+      {visibleGroups.map((g) => {
         const netText = isNetHidden
           ? maskCurrencyString(phpCurrency(g.endBalance), { dropDecimals: true, maskChar: "*" })
           : phpCurrency(g.endBalance);
 
         return (
-          <section key={g.key} className="rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm">
+          <section
+            key={g.key}
+            className="rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm"
+          >
             {/* Day header */}
             <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200 sticky top-0">
               <div className="flex items-center gap-2">
@@ -431,7 +606,9 @@ function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit,
                   title={collapsed[g.key] ? "Expand" : "Collapse"}
                 >
                   <ChevronRight
-                    className={`size-4 text-gray-600 transition-transform ${collapsed[g.key] ? "" : "rotate-90"}`}
+                    className={`size-4 text-gray-600 transition-transform ${
+                      collapsed[g.key] ? "" : "rotate-90"
+                    }`}
                   />
                 </button>
                 <div className="font-semibold text-gray-800">{g.label}</div>
@@ -439,15 +616,25 @@ function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit,
 
               <div className="flex items-center gap-4 text-sm">
                 <div className="text-gray-600">
-                  In: <span className="font-semibold text-emerald-700">{phpCurrency(g.incomeToday)}</span>
+                  In:{" "}
+                  <span className="font-semibold text-emerald-700">
+                    {phpCurrency(g.incomeToday)}
+                  </span>
                 </div>
                 <div className="text-gray-600">
-                  Spent: <span className="font-semibold text-blue-700">{phpCurrency(g.spentToday)}</span>
+                  Spent:{" "}
+                  <span className="font-semibold text-blue-700">
+                    {phpCurrency(g.spentToday)}
+                  </span>
                 </div>
                 <div className="text-gray-600">
                   Start: <span className="font-semibold">{phpCurrency(g.startBalance)}</span>
                 </div>
-                <div className={`font-semibold ${g.endBalance >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                <div
+                  className={`font-semibold ${
+                    g.endBalance >= 0 ? "text-emerald-600" : "text-red-600"
+                  }`}
+                >
                   Net: {netText}
                 </div>
               </div>
@@ -472,9 +659,32 @@ function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit,
           </section>
         );
       })}
+
+      {/* Infinite scroll sentinel */}
+      <div ref={sentinelRef} />
+
+      {/* Fallback manual load-more */}
+      {hasMore && (
+        <div className="pt-2 flex justify-center">
+          <button
+            onClick={() =>
+              setVisibleCount((c) => Math.min(c + STEP_DAYS, groupsFull.length))
+            }
+            className="px-4 py-2 rounded-lg bg-white border shadow-sm text-sm hover:bg-gray-50"
+          >
+            Load {STEP_DAYS} more days
+          </button>
+        </div>
+      )}
+      {!hasMore && (
+        <div className="pt-2 text-center text-xs text-gray-400">
+          End of month
+        </div>
+      )}
     </div>
   );
 }
+
 
 function MTDChart({ data, isNetHidden }) {
   const fmt = (v) => (isNetHidden ? "₱***" : phpCurrency(v));
@@ -1383,6 +1593,12 @@ useEffect(() => {
 
   const isCombined = Boolean(spouseConnection?.spouse_user_id);
 
+  const viewMonthKey = useMemo(
+    () => `${viewMonth.getFullYear()}-${String(viewMonth.getMonth()+1).padStart(2,"0")}`,
+    [viewMonth]
+  );
+
+
   return (
     <div className="min-h-screen w-full bg-gray-50 text-gray-800">
       <div className="max-w-4xl mx-auto p-4 sm:p-6">
@@ -1501,6 +1717,7 @@ useEffect(() => {
               onEdit={setEditingExpense}
               onDelete={handleDeleteExpense}
               isNetHidden={isNetHidden}
+              resetKey={viewMonthKey}
             />
           ) : (
             <IncomeList
@@ -1512,6 +1729,7 @@ useEffect(() => {
               onEdit={setEditingIncome}
               onDelete={handleDeleteIncome}
               isNetHidden={isNetHidden}
+              resetKey={viewMonthKey}
             />
           )}
 
