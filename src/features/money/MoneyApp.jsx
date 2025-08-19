@@ -373,8 +373,10 @@ function ExpenseList({ groups, loading, error, monthLabel, currentUserId, onEdit
   );
 }
 
+function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit, onDelete, isNetHidden }) {
+  const [collapsed, setCollapsed] = useState({});
+  const toggle = (k) => setCollapsed((p) => ({ ...p, [k]: !p[k] }));
 
-function IncomeList({ incomes, loading, error, monthLabel, currentUserId, onEdit, onDelete }) {
   if (loading) {
     return (
       <div className="flex justify-center items-center p-12 bg-white rounded-2xl shadow-sm">
@@ -385,7 +387,7 @@ function IncomeList({ incomes, loading, error, monthLabel, currentUserId, onEdit
   if (error) {
     return <div className="p-6 bg-white rounded-2xl shadow-sm text-red-600">{error}</div>;
   }
-  if (!incomes?.length) {
+  if (!groups?.length) {
     return (
       <div className="p-12 text-center text-gray-500 bg-white rounded-2xl shadow-sm">
         <p>No income for {monthLabel} yet.</p>
@@ -393,11 +395,66 @@ function IncomeList({ incomes, loading, error, monthLabel, currentUserId, onEdit
       </div>
     );
   }
+
   return (
-    <div className="space-y-3">
-      {incomes.map((i) => (
-        <RowCard key={i.id} row={i} currentUserId={currentUserId} icons={incomeIcons} kind="income" onEdit={() => onEdit(i)} onDelete={() => onDelete(i.id)} />
-      ))}
+    <div className="space-y-4">
+      {groups.map((g) => {
+        const netText = isNetHidden
+          ? maskCurrencyString(phpCurrency(g.endBalance), { dropDecimals: true, maskChar: "*" })
+          : phpCurrency(g.endBalance);
+
+        return (
+          <section key={g.key} className="rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm">
+            {/* Day header */}
+            <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200 sticky top-0">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => toggle(g.key)}
+                  className="p-1 rounded-lg hover:bg-gray-100 transition"
+                  title={collapsed[g.key] ? "Expand" : "Collapse"}
+                >
+                  <ChevronRight
+                    className={`size-4 text-gray-600 transition-transform ${collapsed[g.key] ? "" : "rotate-90"}`}
+                  />
+                </button>
+                <div className="font-semibold text-gray-800">{g.label}</div>
+              </div>
+
+              <div className="flex items-center gap-4 text-sm">
+                <div className="text-gray-600">
+                  In: <span className="font-semibold text-emerald-700">{phpCurrency(g.incomeToday)}</span>
+                </div>
+                <div className="text-gray-600">
+                  Spent: <span className="font-semibold text-blue-700">{phpCurrency(g.spentToday)}</span>
+                </div>
+                <div className="text-gray-600">
+                  Start: <span className="font-semibold">{phpCurrency(g.startBalance)}</span>
+                </div>
+                <div className={`font-semibold ${g.endBalance >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                  Net: {netText}
+                </div>
+              </div>
+            </div>
+
+            {/* Rows */}
+            {!collapsed[g.key] && (
+              <div className="p-3 space-y-3">
+                {g.items.map((i) => (
+                  <RowCard
+                    key={i.id}
+                    row={i}
+                    currentUserId={currentUserId}
+                    icons={incomeIcons}
+                    kind="income"
+                    onEdit={() => onEdit(i)}
+                    onDelete={() => onDelete(i.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -946,6 +1003,67 @@ useEffect(() => {
     return Array.from(sectionsByKey.values()).sort((a, b) => b.key.localeCompare(a.key));
   }, [expenses, incomeByDay]);
 
+  // --- Income groups with running daily balance (same semantics as Expense groups)
+  const incomeGroups = useMemo(() => {
+    // Bucket incomes by day
+    const buckets = new Map(); // dayKey -> income rows
+    for (const i of incomes) {
+      const k = ymdKeyFromISO(i.created_at);
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(i);
+    }
+    for (const arr of buckets.values()) {
+      arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }
+
+    // Build expense sums per day (for daily "Spent" and balances)
+    const expenseDay = new Map();
+    for (const e of expenses) {
+      const k = ymdKeyFromISO(e.created_at);
+      const amt = parseFloat(String(e.amount || 0));
+      expenseDay.set(k, (expenseDay.get(k) || 0) + (Number.isFinite(amt) ? amt : 0));
+    }
+
+    // We need cumulative sums across all days that have income or expense
+    const allKeys = new Set([...buckets.keys(), ...expenseDay.keys(), ...incomeByDay.keys()]);
+    const keysAsc = Array.from(allKeys).sort(); // "YYYY-MM-DD"
+
+    let cumIncome = 0;
+    let cumExpenses = 0;
+    const sectionsByKey = new Map();
+
+    for (const k of keysAsc) {
+      const incToday = incomeByDay.get(k) || 0;
+      cumIncome += incToday;
+
+      const spentToday = expenseDay.get(k) || 0;
+
+      // Balance available for the day BEFORE spending today (includes today's income)
+      const startBalance = cumIncome - cumExpenses;
+      // End-of-day balance after spending
+      const endBalance = startBalance - spentToday;
+
+      // Advance expense accumulator AFTER computing endBalance
+      cumExpenses += spentToday;
+
+      if (buckets.has(k)) {
+        sectionsByKey.set(k, {
+          key: k,
+          label: formatDayLabelFromKey(k),
+          items: buckets.get(k),
+          incomeToday: incToday,
+          spentToday,
+          startBalance,
+          endBalance, // Net you care about for the day
+        });
+      }
+    }
+
+    // Newest day first for rendering
+    return Array.from(sectionsByKey.values()).sort((a, b) => b.key.localeCompare(a.key));
+  }, [incomes, expenses, incomeByDay]);
+
+
 
   // Fetch spouse connection
   const fetchSpouseConnection = async () => {
@@ -1236,15 +1354,17 @@ useEffect(() => {
             />
           ) : (
             <IncomeList
-              incomes={incomes}
+              groups={incomeGroups}
               loading={loadingIncome}
               error={errorIncome}
               monthLabel={monthLabel}
               currentUserId={user.id}
               onEdit={setEditingIncome}
               onDelete={handleDeleteIncome}
+              isNetHidden={isNetHidden}
             />
           )}
+
         </main>
 
         {/* Modals */}
