@@ -29,6 +29,19 @@ import {
   EyeOff
 } from "lucide-react";
 
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+} from "recharts";
+
 // --- Helpers & Constants ---
 const ACCOUNTS = ["gcash", "debit card", "cash", "credit card"];
 const EXPENSE_CATEGORIES = [
@@ -123,6 +136,10 @@ function formatDayLabelFromKey(key) {
   const [y, m, d] = key.split("-");
   const dt = new Date(Number(y), Number(m) - 1, Number(d));
   return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(dt);
+}
+
+function shortMD(dateObj) {
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(dateObj);
 }
 
 // --- Spouse Management Modal ---
@@ -455,6 +472,72 @@ function IncomeList({ groups, loading, error, monthLabel, currentUserId, onEdit,
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function MTDChart({ data, isNetHidden }) {
+  const fmt = (v) => (isNetHidden ? "₱***" : phpCurrency(v));
+  const Tip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    const byKey = Object.fromEntries(payload.map((p) => [p.dataKey, p.value]));
+    return (
+      <div className="rounded-lg border bg-white p-2 shadow-sm text-xs">
+        <div className="font-semibold mb-1">{label}</div>
+        <div>Net: <span className="font-semibold">{fmt(byKey.net)}</span></div>
+        <div>Income (cum): <span>{isNetHidden ? "₱***" : phpCurrency(byKey.incomeCum)}</span></div>
+        <div>Expenses (cum): <span>{isNetHidden ? "₱***" : phpCurrency(byKey.expenseCum)}</span></div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="h-64">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="netFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#10b981" stopOpacity={0.32} />
+              <stop offset="95%" stopColor="#10b981" stopOpacity={0.06} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="label" />
+          <YAxis tickFormatter={fmt} width={isNetHidden ? 40 : 64} />
+          <Tooltip content={<Tip />} />
+          <Legend />
+          {/* Bold Net area/line */}
+          <Area
+            type="monotone"
+            dataKey="net"
+            name="Net"
+            stroke="#10b981"
+            strokeWidth={2}
+            fill="url(#netFill)"
+            dot={false}
+            isAnimationActive={false}
+          />
+          {/* Thin lines for cumulative income/expenses */}
+          <Line
+            type="monotone"
+            dataKey="incomeCum"
+            name="Income (cum)"
+            stroke="#059669"
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="expenseCum"
+            name="Expenses (cum)"
+            stroke="#2563eb"
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -1064,6 +1147,64 @@ useEffect(() => {
   }, [incomes, expenses, incomeByDay]);
 
 
+  // Sum expenses per day for quick lookup (separate from the expenseGroups' local var)
+  const expenseByDayMap = useMemo(() => {
+    const m = new Map();
+    for (const e of expenses) {
+      const k = ymdKeyFromISO(e.created_at);
+      const amt = parseFloat(String(e.amount || 0));
+      if (Number.isFinite(amt)) m.set(k, (m.get(k) || 0) + amt);
+    }
+    return m;
+  }, [expenses]);
+
+  // Month-to-date cumulative series for the current viewMonth
+  const mtdSeries = useMemo(() => {
+    const start = firstDayOfMonth(viewMonth);
+    const today = new Date();
+    const isCurrentMonth =
+      start.getFullYear() === today.getFullYear() && start.getMonth() === today.getMonth();
+    // End of range = today (if current month) else last day of viewMonth
+    const end = isCurrentMonth
+      ? new Date(today.getFullYear(), today.getMonth(), today.getDate())
+      : new Date(start.getFullYear(), start.getMonth() + 1, 0);
+
+    // iterate day-by-day
+    const out = [];
+    let cursor = new Date(start);
+    let cumIncome = 0;
+    let cumExpense = 0;
+
+    while (cursor <= end) {
+      const k = ymdKeyFromISO(cursor);
+      const inc = (typeof incomeByDay?.get === "function" ? (incomeByDay.get(k) || 0) : 0);
+      const exp = expenseByDayMap.get(k) || 0;
+      cumIncome += inc;
+      cumExpense += exp;
+
+      out.push({
+        key: k,
+        label: shortMD(cursor),      // e.g., "Aug 19"
+        incomeCum: cumIncome,
+        expenseCum: cumExpense,
+        net: cumIncome - cumExpense,
+      });
+
+      // move to next day
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
+    }
+    return out;
+  }, [viewMonth, incomeByDay, expenseByDayMap]);
+
+  // Pretty range label for the chart header
+  const mtdRangeLabel = useMemo(() => {
+    const start = firstDayOfMonth(viewMonth);
+    const today = new Date();
+    const isCurrentMonth =
+      start.getFullYear() === today.getFullYear() && start.getMonth() === today.getMonth();
+    const end = isCurrentMonth ? today : new Date(start.getFullYear(), start.getMonth() + 1, 0);
+    return `${shortMD(start)} – ${shortMD(end)}`;
+  }, [viewMonth]);
 
   // Fetch spouse connection
   const fetchSpouseConnection = async () => {
@@ -1338,6 +1479,16 @@ useEffect(() => {
           </div>
 
         </div>
+
+        {/* --- Month-to-date Chart --- */}
+        <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm text-gray-500 font-medium">Month-to-date</div>
+            <div className="text-xs text-gray-400">{mtdRangeLabel}</div>
+          </div>
+          <MTDChart data={mtdSeries} isNetHidden={isNetHidden} />
+        </section>
+
 
         {/* --- Main Content --- */}
         <main>
