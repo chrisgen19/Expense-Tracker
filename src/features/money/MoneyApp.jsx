@@ -1241,6 +1241,16 @@ useEffect(() => {
     return m;
   }, [incomes]);
 
+  const expenseByDay = useMemo(() => {
+    const m = new Map();
+    for (const e of expenses) {
+      const k = ymdKeyFromISO(e.created_at);
+      const amt = parseFloat(String(e.amount || 0));
+      m.set(k, (m.get(k) || 0) + (Number.isFinite(amt) ? amt : 0));
+    }
+    return m;
+  }, [expenses]);
+
   // Group expenses by day and compute daily balances:
   // startBalance (after today's income, before spending) and endBalance (start - spentToday)
   const expenseGroups = useMemo(() => {
@@ -1298,63 +1308,55 @@ useEffect(() => {
 
   // --- Income groups with running daily balance (same semantics as Expense groups)
   const incomeGroups = useMemo(() => {
-    // Bucket incomes by day
-    const buckets = new Map(); // dayKey -> income rows
-    for (const i of incomes) {
-      const k = ymdKeyFromISO(i.created_at);
-      if (!buckets.has(k)) buckets.set(k, []);
-      buckets.get(k).push(i);
+  // bucket ORIGINAL income rows by day (do NOT map/clone)
+  const buckets = new Map();
+  for (const i of incomes) {
+    const k = ymdKeyFromISO(i.created_at);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(i);
+  }
+  // sort rows newest-first per day
+  for (const arr of buckets.values()) {
+    arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  }
+
+  // build ordered list of all days that have any activity (for running balance)
+  const allKeys = new Set([...incomeByDay.keys(), ...expenseByDay.keys()]);
+  const keysAsc = Array.from(allKeys).sort();
+
+  let cumIncome = 0;
+  let cumExpenses = 0;
+  const sections = [];
+
+  for (const k of keysAsc) {
+    const incToday = incomeByDay.get(k) || 0;
+    const spentToday = expenseByDay.get(k) || 0;
+
+    const startBalance = (cumIncome + incToday) - cumExpenses; // after today's income, before spending
+    const endBalance = startBalance - spentToday;              // end-of-day
+
+    // advance cumulative after computing balances
+    cumIncome += incToday;
+    cumExpenses += spentToday;
+
+    // Only create a section for days that actually have INCOME rows
+    if (buckets.has(k)) {
+      sections.push({
+        key: k,
+        label: formatDayLabelFromKey(k),
+        items: buckets.get(k),     // original rows preserved (user_id, is_spouse intact)
+        incomeToday: incToday,
+        spentToday,
+        startBalance,
+        endBalance,
+      });
     }
-    for (const arr of buckets.values()) {
-      arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    }
+  }
 
-    // Build expense sums per day (for daily "Spent" and balances)
-    const expenseDay = new Map();
-    for (const e of expenses) {
-      const k = ymdKeyFromISO(e.created_at);
-      const amt = parseFloat(String(e.amount || 0));
-      expenseDay.set(k, (expenseDay.get(k) || 0) + (Number.isFinite(amt) ? amt : 0));
-    }
-
-    // We need cumulative sums across all days that have income or expense
-    const allKeys = new Set([...buckets.keys(), ...expenseDay.keys(), ...incomeByDay.keys()]);
-    const keysAsc = Array.from(allKeys).sort(); // "YYYY-MM-DD"
-
-    let cumIncome = 0;
-    let cumExpenses = 0;
-    const sectionsByKey = new Map();
-
-    for (const k of keysAsc) {
-      const incToday = incomeByDay.get(k) || 0;
-      cumIncome += incToday;
-
-      const spentToday = expenseDay.get(k) || 0;
-
-      // Balance available for the day BEFORE spending today (includes today's income)
-      const startBalance = cumIncome - cumExpenses;
-      // End-of-day balance after spending
-      const endBalance = startBalance - spentToday;
-
-      // Advance expense accumulator AFTER computing endBalance
-      cumExpenses += spentToday;
-
-      if (buckets.has(k)) {
-        sectionsByKey.set(k, {
-          key: k,
-          label: formatDayLabelFromKey(k),
-          items: buckets.get(k),
-          incomeToday: incToday,
-          spentToday,
-          startBalance,
-          endBalance, // Net you care about for the day
-        });
-      }
-    }
-
-    // Newest day first for rendering
-    return Array.from(sectionsByKey.values()).sort((a, b) => b.key.localeCompare(a.key));
-  }, [incomes, expenses, incomeByDay]);
+  // newest day first
+  sections.sort((a, b) => b.key.localeCompare(a.key));
+  return sections;
+}, [incomes, incomeByDay, expenseByDay]);
 
 
   // Sum expenses per day for quick lookup (separate from the expenseGroups' local var)
@@ -1438,56 +1440,56 @@ useEffect(() => {
 
   // Fetch expenses for month (+spouse)
   useEffect(() => {
-    const fetchExpenses = async () => {
-      setLoadingExpenses(true);
-      setErrorExpenses(null);
-      try {
-        const start = firstDayOfMonth(viewMonth);
-        const end = addMonths(start, 1);
+      const fetchExpenses = async () => {
+        setLoadingExpenses(true);
+        setErrorExpenses(null);
+        try {
+          const start = firstDayOfMonth(viewMonth);
+          const end = addMonths(start, 1);
 
-        const { data: userExpenses, error: userError } = await supabase
-          .from("expenses")
-          .select("*")
-          .eq("user_id", user.id)
-          .gte("created_at", toISODate(start))
-          .lt("created_at", toISODate(end))
-          .order("created_at", { ascending: false });
-
-        if (userError) throw userError;
-
-        let allExpenses = userExpenses || [];
-
-        if (spouseConnection?.spouse_user_id) {
-          const { data: spouseExpenses, error: spouseError } = await supabase
+          const { data: userExpenses, error: userError } = await supabase
             .from("expenses")
             .select("*")
-            .eq("user_id", spouseConnection.spouse_user_id)
+            .eq("user_id", user.id)
             .gte("created_at", toISODate(start))
             .lt("created_at", toISODate(end))
             .order("created_at", { ascending: false });
-          if (spouseError) throw spouseError;
-          const marked = (spouseExpenses || []).map((row) => ({
-            ...row,
-            is_spouse: true,
-            spouse_email: spouseConnection.spouse_email,
-          }));
-          allExpenses = [...allExpenses, ...marked].sort(
-            (a, b) => new Date(b.created_at) - new Date(a.created_at)
-          );
+
+          if (userError) throw userError;
+
+          let allExpenses = userExpenses || [];
+
+          if (spouseConnection?.spouse_user_id) {
+            const { data: spouseExpenses, error: spouseError } = await supabase
+              .from("expenses")
+              .select("*")
+              .eq("user_id", spouseConnection.spouse_user_id)
+              .gte("created_at", toISODate(start))
+              .lt("created_at", toISODate(end))
+              .order("created_at", { ascending: false });
+            if (spouseError) throw spouseError;
+            const marked = (spouseExpenses || []).map((row) => ({
+              ...row,
+              is_spouse: true,
+              spouse_email: spouseConnection.spouse_email,
+            }));
+            allExpenses = [...allExpenses, ...marked].sort(
+              (a, b) => new Date(b.created_at) - new Date(a.created_at)
+            );
+          }
+
+          setExpenses(allExpenses);
+        } catch (err) {
+          setErrorExpenses(err.message || "Failed to load expenses.");
+        } finally {
+          setLoadingExpenses(false);
         }
+      };
+      fetchExpenses();
+    }, [viewMonth, user.id, spouseConnection]);
 
-        setExpenses(allExpenses);
-      } catch (err) {
-        setErrorExpenses(err.message || "Failed to load expenses.");
-      } finally {
-        setLoadingExpenses(false);
-      }
-    };
-    fetchExpenses();
-  }, [viewMonth, user.id, spouseConnection]);
-
-  // Fetch income for month (+spouse)
-  useEffect(() => {
+    // Fetch income for month (+spouse)
+    useEffect(() => {
     const fetchIncome = async () => {
       setLoadingIncome(true);
       setErrorIncome(null);
@@ -1515,11 +1517,14 @@ useEffect(() => {
             .lt("created_at", toISODate(end))
             .order("created_at", { ascending: false });
           if (spouseError) throw spouseError;
+
+          // Tag ONLY spouse rows
           const marked = (spouseIncome || []).map((row) => ({
             ...row,
             is_spouse: true,
             spouse_email: spouseConnection.spouse_email,
           }));
+
           allIncome = [...allIncome, ...marked].sort(
             (a, b) => new Date(b.created_at) - new Date(a.created_at)
           );
@@ -1534,6 +1539,7 @@ useEffect(() => {
     };
     fetchIncome();
   }, [viewMonth, user.id, spouseConnection]);
+
 
   // Handlers: expenses
   const handleExpenseAdded = (newRow) => {
