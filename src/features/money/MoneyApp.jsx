@@ -25,6 +25,8 @@ import {
   Wallet,
   Banknote,
   TrendingUp,
+  Eye, 
+  EyeOff
 } from "lucide-react";
 
 // --- Helpers & Constants ---
@@ -96,6 +98,17 @@ function phpCurrency(n) {
     currency: "PHP",
   });
 }
+
+// Mask a pre-formatted currency string by replacing digits with a character.
+// Example: "₱12,345.67" -> "₱**,***.**"
+function maskCurrencyString(formatted, { dropDecimals = false, maskChar = "*" } = {}) {
+  let s = formatted;
+  if (dropDecimals) s = s.replace(/[.,]\d+$/, ""); // optionally drop decimals entirely
+  return s.replace(/\d/g, maskChar);
+}
+
+// Persist the user's net-privacy choice per user id
+const NET_PRIVACY_KEY = (uid) => `moneyapp:net-privacy:${uid}`;
 
 // --- Spouse Management Modal ---
 function SpouseModal({ isOpen, onClose, user, spouseConnection, onSpouseUpdate }) {
@@ -756,6 +769,24 @@ export default function MoneyApp({ user, onSignOut }) {
   // Spouse
   const [spouseConnection, setSpouseConnection] = useState(null);
 
+// Privacy toggle for net income (persisted per user)
+// Initialize from localStorage BEFORE first paint
+const [isNetHidden, setIsNetHidden] = useState(() => {
+  try {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(NET_PRIVACY_KEY(user.id)) === "1";
+  } catch {
+    return false;
+  }
+});
+
+// Persist whenever it changes
+useEffect(() => {
+  try {
+    localStorage.setItem(NET_PRIVACY_KEY(user.id), isNetHidden ? "1" : "0");
+  } catch {}
+}, [user.id, isNetHidden]);
+
   const nextMonthDisabled = useMemo(
     () => addMonths(viewMonth, 1) > firstDayOfMonth(new Date()),
     [viewMonth]
@@ -1012,19 +1043,41 @@ export default function MoneyApp({ user, onSignOut }) {
         </div>
 
         {/* --- Summary --- */}
-        <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="p-4 bg-white rounded-2xl shadow-sm">
             <div className="text-sm text-gray-500">{isCombined ? "Combined" : "Your"} expenses — {monthLabel}</div>
             <div className="text-2xl font-bold text-gray-900">{phpCurrency(totalExpenses)}</div>
           </div>
-          <div className="p-4 bg-white rounded-2xl shadow-sm">
-            <div className="text-sm text-gray-500">{isCombined ? "Combined" : "Your"} income — {monthLabel}</div>
-            <div className="text-2xl font-bold text-gray-900">{phpCurrency(totalIncome)}</div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setIsNetHidden((v) => !v)}
+            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setIsNetHidden((v) => !v)}
+            className="p-4 bg-white rounded-2xl shadow-sm cursor-pointer hover:bg-gray-50 transition-colors"
+            title={isNetHidden ? "Click to show" : "Click to hide"}
+            aria-label={isNetHidden ? "Net amount hidden. Click to show." : "Net amount shown. Click to hide."}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-sm text-gray-500">Net (income − expenses)</div>
+                <div
+                  className={`text-2xl font-bold transition-all duration-200 ${
+                    net >= 0 ? "text-emerald-600" : "text-red-600"
+                  }`}
+                >
+                  {isNetHidden
+                    ? maskCurrencyString(phpCurrency(net), { dropDecimals: true, maskChar: "*" })
+                    // If you prefer no decimals when hidden, set dropDecimals: true
+                    : phpCurrency(net)}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">{isNetHidden ? "Hidden" : "Shown"} — click to toggle</div>
+              </div>
+              <div className="mt-1">
+                {isNetHidden ? <EyeOff className="size-5 text-gray-500" /> : <Eye className="size-5 text-gray-500" />}
+              </div>
+            </div>
           </div>
-          <div className="p-4 bg-white rounded-2xl shadow-sm">
-            <div className="text-sm text-gray-500">Net (income − expenses)</div>
-            <div className={`text-2xl font-bold ${net >= 0 ? "text-emerald-600" : "text-red-600"}`}>{phpCurrency(net)}</div>
-          </div>
+
         </div>
 
         {/* --- Main Content --- */}

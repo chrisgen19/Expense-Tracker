@@ -41,5 +41,5 @@ export default function App() {
     return <AuthComponent />;
   }
 
-  return <MoneyApp user={user} onSignOut={handleSignOut} />;
+  return <MoneyApp key={user.id} user={user} onSignOut={handleSignOut} />;
 }
